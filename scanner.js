@@ -41,23 +41,13 @@ startScanBtn.addEventListener('click', async () => {
 
     html5QrCode = new Html5Qrcode("reader");
 
-    // Запрашиваем максимальное разрешение – это ключ для мелких кодов
-    const cameraConfig = {
-        facingMode: "environment",
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-    };
-
-    // Увеличиваем область поиска до 400x400 – так сканер охватит весь кадр,
-    // а маленький код всё равно будет в центре. Это лучше, чем маленькая рамка.
+    // Только один ключ — facingMode
+    const cameraConfig = { facingMode: "environment" };
     const config = {
         fps: 10,
         qrbox: { width: 400, height: 400 },
         aspectRatio: 1.0
     };
-
-    // Включаем подробные логи библиотеки для отладки (смотрите консоль)
-    html5QrCode._logger = { log: (...args) => console.log('[QR-LOG]', ...args) };
 
     try {
         await html5QrCode.start(
@@ -67,7 +57,7 @@ startScanBtn.addEventListener('click', async () => {
             onScanError
         );
         resultP.innerText = 'Наведите на QR-код (2×2 см) и медленно приближайте';
-        console.log('Камера запущена, разрешение запрошено 1920x1080');
+        console.log('Камера запущена');
     } catch (err) {
         console.error('Ошибка запуска камеры:', err);
         resultP.innerText = '❌ Не удалось запустить камеру: ' + (err.message || err);
