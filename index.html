@@ -11,18 +11,11 @@
             padding: 20px;
             margin: 0;
         }
-        #reader {
-            width: 300px;
-            margin: 20px auto;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            overflow: hidden;
-        }
         button {
             background: #2AABEE;
             color: white;
             border: none;
-            padding: 12px 24px;
+            padding: 14px 28px;
             border-radius: 8px;
             font-size: 16px;
             cursor: pointer;
@@ -35,27 +28,20 @@
             margin: 20px;
             font-size: 18px;
             font-weight: bold;
+            word-break: break-all;
         }
     </style>
 </head>
 <body>
     <h1>Сканер лотерейных билетов</h1>
-    <p>Нажмите кнопку и наведите камеру на QR-код</p>
+    <p>Сфотографируйте QR-код на камеру телефона, затем загрузите снимок</p>
 
-    <!-- Кнопка запуска сканера -->
-    <button id="start-scan-btn">Сканировать QR-код</button>
+    <button id="upload-btn">Загрузить фото QR-кода</button>
 
-    <!-- Блок для камеры (скрыт по умолчанию) -->
-    <div id="reader" style="display: none;"></div>
-
-    <!-- Здесь покажем результат -->
     <p id="result"></p>
 
-    <!-- Библиотека Telegram WebApp (оставим, вдруг пригодится) -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- Библиотека сканера QR-кодов -->
     <script src="https://unpkg.com/html5-qrcode"></script>
-    <!-- Наша логика -->
     <script src="scanner.js"></script>
 </body>
 </html>
