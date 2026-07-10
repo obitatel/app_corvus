@@ -37,27 +37,38 @@ function onScanError(errorMessage) {
 startScanBtn.addEventListener('click', async () => {
     startScanBtn.style.display = 'none';
     readerDiv.style.display = 'block';
-    resultP.innerText = 'Запуск камеры...';
-
-    html5QrCode = new Html5Qrcode("reader");
-
-    // Только один ключ — facingMode
-    const cameraConfig = { facingMode: "environment" };
-    const config = {
-        fps: 10,
-        qrbox: { width: 400, height: 400 },
-        aspectRatio: 1.0
-    };
+    resultP.innerText = 'Поиск камеры...';
 
     try {
+        // Получаем список камер
+        const cameras = await Html5Qrcode.getCameras();
+        if (!cameras || cameras.length === 0) {
+            throw new Error('Камеры не найдены');
+        }
+
+        // Берём заднюю камеру (обычно последняя или с ключевыми словами)
+        let cameraId = cameras[0].id;
+        for (let cam of cameras) {
+            if (/back|rear|environment|задн/i.test(cam.label)) {
+                cameraId = cam.id;
+                break;
+            }
+        }
+
+        html5QrCode = new Html5Qrcode("reader");
+        const config = {
+            fps: 10,
+            qrbox: { width: 400, height: 400 },
+            aspectRatio: 1.0
+        };
+
         await html5QrCode.start(
-            cameraConfig,
+            cameraId,          // ← строка, а не объект
             config,
             onScanSuccess,
             onScanError
         );
         resultP.innerText = 'Наведите на QR-код (2×2 см) и медленно приближайте';
-        console.log('Камера запущена');
     } catch (err) {
         console.error('Ошибка запуска камеры:', err);
         resultP.innerText = '❌ Не удалось запустить камеру: ' + (err.message || err);
