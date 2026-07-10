@@ -1,66 +1,78 @@
-// Получаем элементы
+// scanner.js - обновлённая версия для маленьких QR-кодов
+
 const startScanBtn = document.getElementById('start-scan-btn');
 const readerDiv = document.getElementById('reader');
 const resultP = document.getElementById('result');
 
-let html5QrCode; // объект сканера
+let html5QrCode;
 
-// Функция для сохранения текста в файл (скачивание)
 function saveTextAsFile(text) {
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'qr_code_data.txt'; // имя файла
+    a.download = 'qr_code_data.txt';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 }
 
-// Успешное сканирование
 function onScanSuccess(decodedText, decodedResult) {
-    // Останавливаем сканер
     if (html5QrCode && html5QrCode.isScanning) {
         html5QrCode.stop().then(() => {
             readerDiv.style.display = 'none';
             startScanBtn.style.display = 'inline-block';
         }).catch(err => console.error('Ошибка остановки:', err));
     }
-
-    // Показываем результат
     resultP.innerText = 'Сканировано: ' + decodedText;
-
-    // Спрашиваем, сохранить ли в файл (можно сделать и без подтверждения)
     if (confirm('QR-код считан! Сохранить результат в файл?')) {
         saveTextAsFile(decodedText);
     }
 }
 
-// Ошибка сканирования (игнорируем, иначе будет спамить)
 function onScanError(errorMessage) {
-    // Можно выводить в консоль для отладки
-    // console.warn(errorMessage);
+    // Выводим ошибку в консоль для диагностики — полезно понять, видит ли камера что-то похожее на QR
+    console.log('Scan error:', errorMessage);
+    // Также можно показывать пользователю, но не будем засорять интерфейс
+    // resultP.innerText = 'Поиск QR-кода... (ошибка: ' + errorMessage + ')';
 }
 
-// Запуск сканера по кнопке
-startScanBtn.addEventListener('click', () => {
+startScanBtn.addEventListener('click', async () => {
     startScanBtn.style.display = 'none';
     readerDiv.style.display = 'block';
-    resultP.innerText = ''; // очищаем предыдущий результат
+    resultP.innerText = 'Наведите камеру на QR-код (2×2 см) и удерживайте неподвижно';
 
     html5QrCode = new Html5Qrcode("reader");
-    const config = { fps: 10, qrbox: { width: 250, height: 250 } };
 
-    html5QrCode.start(
-        { facingMode: "environment" }, // задняя камера
-        config,
-        onScanSuccess,
-        onScanError
-    ).catch(err => {
-        console.error('Не удалось запустить камеру:', err);
-        alert('Ошибка доступа к камере. Проверьте разрешения и HTTPS-соединение.');
+    // Конфигурация: рамка 200x200, частота кадров 10
+    const config = {
+        fps: 10,
+        qrbox: { width: 200, height: 200 },
+        // Попробуем аспектное соотношение, если нужно
+        aspectRatio: 1.0
+    };
+
+    // Дополнительные настройки камеры: попытка применить зум (работает не на всех устройствах)
+    const cameraConfig = {
+        facingMode: "environment"
+    };
+
+    // Некоторые устройства позволяют задать zoom через constraints, но html5-qrcode не поддерживает напрямую.
+    // Можно попробовать запросить разрешение побольше, чтобы улучшить распознавание.
+    // Альтернативно, если есть возможность, используем заднюю камеру с максимальным разрешением.
+
+    try {
+        await html5QrCode.start(
+            cameraConfig,
+            config,
+            onScanSuccess,
+            onScanError
+        );
+    } catch (err) {
+        console.error('Ошибка запуска камеры:', err);
+        alert('Не удалось запустить камеру: ' + err.message);
         startScanBtn.style.display = 'inline-block';
         readerDiv.style.display = 'none';
-    });
+    }
 });
