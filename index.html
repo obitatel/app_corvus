@@ -2,72 +2,36 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Сканер Data Matrix</title>
     <style>
         body {
             font-family: sans-serif;
-            margin: 0;
-            padding: 0;
-            background: #000;
-            color: white;
             text-align: center;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-        #video-container {
-            position: relative;
-            width: 100%;
-            max-width: 400px;
-            margin: 0 auto;
-        }
-        video {
-            width: 100%;
-            height: auto;
-            border-radius: 8px;
-            display: none;
+            padding: 20px;
+            margin: 0;
         }
         button {
             background: #2AABEE;
             color: white;
             border: none;
-            padding: 14px 28px;
-            border-radius: 8px;
+            padding: 16px 32px;
+            border-radius: 10px;
             font-size: 18px;
             cursor: pointer;
-            margin: 10px;
-            display: inline-block;
-        }
-        button:disabled {
-            background: #666;
         }
         #result {
+            margin-top: 20px;
             font-size: 20px;
             font-weight: bold;
             word-break: break-all;
-            margin: 20px;
-            min-height: 30px;
-        }
-        #fallback-upload {
-            display: none;
-            background: #444;
         }
     </style>
 </head>
 <body>
     <h1>Сканер Data Matrix</h1>
-
-    <div id="video-container">
-        <video id="video" autoplay playsinline muted></video>
-    </div>
-
-    <button id="capture-btn" style="display:none;">📸 Распознать</button>
-    <button id="start-camera-btn">📷 Включить камеру</button>
-    <button id="fallback-upload">📁 Загрузить фото (если нет камеры)</button>
-
+    <p>Сфотографируйте код стандартной камерой телефона, затем нажмите кнопку и выберите снимок.</p>
+    <button id="scan-btn">📷 Загрузить фото Data Matrix</button>
     <p id="result"></p>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
