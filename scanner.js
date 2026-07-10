@@ -1,16 +1,11 @@
-const video = document.getElementById('video');
-const captureBtn = document.getElementById('capture-btn');
-const zoomInBtn = document.getElementById('zoom-in');
-const zoomOutBtn = document.getElementById('zoom-out');
-const zoomSlider = document.getElementById('zoom-slider');
-const resultP = document.getElementById('result');
+const nativeScanBtn = document.getElementById('native-scan-btn');
+const uploadBtn = document.getElementById('upload-btn');
 const cropContainer = document.getElementById('crop-container');
 const imageToCrop = document.getElementById('image-to-crop');
 const cropScanBtn = document.getElementById('crop-scan-btn');
 const cancelCropBtn = document.getElementById('cancel-crop-btn');
+const resultP = document.getElementById('result');
 
-let stream = null;
-let currentZoom = 1;
 let cropper = null;
 const tg = window.Telegram.WebApp;
 tg.ready();
@@ -27,106 +22,76 @@ function saveTextAsFile(text) {
     URL.revokeObjectURL(url);
 }
 
-async function startCamera() {
-    try {
-        stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                facingMode: 'environment',
-                width: { ideal: 1920 },
-                height: { ideal: 1080 }
-            }
-        });
-        video.srcObject = stream;
-        video.onloadedmetadata = () => {
-            video.play();
-            applyZoom(currentZoom);
-        };
-    } catch (err) {
-        resultP.innerText = '❌ Ошибка камеры: ' + err.message;
+// ---------- Нативный сканер ----------
+nativeScanBtn.addEventListener('click', () => {
+    if (typeof tg.showScanQrPopup !== 'function') {
+        alert('Нативный сканер недоступен. Обновите Telegram или используйте загрузку фото.');
+        return;
     }
-}
-
-function applyZoom(zoom) {
-    if (!stream) return;
-    const videoTrack = stream.getVideoTracks()[0];
-    if (!videoTrack) return;
-    const capabilities = videoTrack.getCapabilities();
-    if ('zoom' in capabilities) {
-        const newZoom = Math.min(capabilities.zoom.max, Math.max(capabilities.zoom.min, zoom));
-        videoTrack.applyConstraints({ advanced: [{ zoom: newZoom }] })
-            .then(() => {
-                currentZoom = newZoom;
-                zoomSlider.value = newZoom;
-            })
-            .catch(err => console.warn('Зум не поддерживается', err));
-    } else {
-        console.warn('Зум недоступен');
-    }
-}
-
-zoomInBtn.addEventListener('click', () => applyZoom(currentZoom + 0.5));
-zoomOutBtn.addEventListener('click', () => applyZoom(currentZoom - 0.5));
-zoomSlider.addEventListener('input', (e) => applyZoom(parseFloat(e.target.value)));
-
-captureBtn.addEventListener('click', async () => {
-    resultP.innerText = '⏳ Обработка...';
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-    try {
-        const html5QrCode = new Html5Qrcode();
-        const result = await html5QrCode.scanFile(blob, false);
-        resultP.innerText = '✅ Сканировано: ' + result;
-        if (confirm('Сохранить результат в файл?')) {
-            saveTextAsFile(result);
+    tg.onEvent('qrTextReceived', (event) => {
+        const text = event.data;
+        if (text) {
+            resultP.innerText = '✅ Сканировано: ' + text;
+            if (confirm('Сохранить результат в файл?')) saveTextAsFile(text);
+            tg.closeScanQrPopup();
         }
-    } catch (err) {
-        resultP.innerText = '❌ Не распознано. Можно обрезать снимок.';
-        const url = URL.createObjectURL(blob);
-        imageToCrop.src = url;
-        cropContainer.style.display = 'flex';
-        if (cropper) cropper.destroy();
-        cropper = new Cropper(imageToCrop, {
-            aspectRatio: NaN,
-            viewMode: 1,
-            autoCropArea: 0.3,
-            responsive: true,
-            background: false,
-            zoomable: true,
-            movable: true,
-        });
-    }
+    });
+    tg.showScanQrPopup({ text: 'Наведите на код' });
+});
+
+// ---------- Загрузка фото + кадрирование + ZXing (Data Matrix) ----------
+uploadBtn.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            imageToCrop.src = ev.target.result;
+            cropContainer.style.display = 'block';
+            if (cropper) cropper.destroy();
+            cropper = new Cropper(imageToCrop, {
+                aspectRatio: NaN,
+                viewMode: 1,
+                autoCropArea: 0.4,
+                responsive: true,
+                background: false,
+            });
+        };
+        reader.readAsDataURL(file);
+    });
+    input.click();
 });
 
 cropScanBtn.addEventListener('click', async () => {
     if (!cropper) return;
-    const croppedCanvas = cropper.getCroppedCanvas({ width: 2400, height: 2400 });
-    const blob = await new Promise(resolve => croppedCanvas.toBlob(resolve, 'image/png'));
+    resultP.innerText = '⏳ Обработка...';
+    const croppedCanvas = cropper.getCroppedCanvas({ width: 2000, height: 2000 });
+    const imageData = croppedCanvas.getContext('2d').getImageData(0, 0, croppedCanvas.width, croppedCanvas.height);
+
+    // Используем ZXing с явным указанием форматов: QR, Data Matrix, Aztec и т.д.
+    const hints = new Map();
+    const formats = [BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX, BarcodeFormat.AZTEC, BarcodeFormat.PDF_417];
+    hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
+    const reader = new ZXingBrowserReader();
+    reader.hints = hints;
+
     try {
-        const html5QrCode = new Html5Qrcode();
-        const result = await html5QrCode.scanFile(blob, false);
-        resultP.innerText = '✅ Сканировано: ' + result;
-        if (confirm('Сохранить результат в файл?')) {
-            saveTextAsFile(result);
-        }
+        const result = reader.decode(imageData);
+        resultP.innerText = '✅ Сканировано: ' + result.text;
+        if (confirm('Сохранить результат в файл?')) saveTextAsFile(result.text);
         closeCrop();
     } catch (err) {
-        resultP.innerText = '❌ Код не найден. Попробуйте обвести точнее.';
+        resultP.innerText = '❌ Код не найден. Попробуйте обвести точнее или используйте нативный сканер.';
     }
 });
 
 cancelCropBtn.addEventListener('click', closeCrop);
 
 function closeCrop() {
-    if (cropper) {
-        cropper.destroy();
-        cropper = null;
-    }
+    if (cropper) cropper.destroy();
+    cropper = null;
     cropContainer.style.display = 'none';
 }
-
-startCamera();
