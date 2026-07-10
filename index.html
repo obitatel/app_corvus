@@ -1,25 +1,61 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Лотерейный сканер</title>
+    <title>Сканер QR-билетов</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            padding: 20px;
+            margin: 0;
+        }
+        #reader {
+            width: 300px;
+            margin: 20px auto;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        button {
+            background: #2AABEE;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        button:disabled {
+            background: #aaa;
+        }
+        #result {
+            margin: 20px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+    </style>
 </head>
 <body>
-    <h1>Привет, участник лотереи!</h1>
-    <p id="user-info">Загрузка...</p>
+    <h1>Сканер лотерейных билетов</h1>
+    <p>Нажмите кнопку и наведите камеру на QR-код</p>
+
+    <!-- Кнопка запуска сканера -->
+    <button id="start-scan-btn">Сканировать QR-код</button>
+
+    <!-- Блок для камеры (скрыт по умолчанию) -->
+    <div id="reader" style="display: none;"></div>
+
+    <!-- Здесь покажем результат -->
+    <p id="result"></p>
+
+    <!-- Библиотека Telegram WebApp (оставим, вдруг пригодится) -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script>
-        const tg = window.Telegram.WebApp;
-        tg.ready(); // Сообщаем Telegram, что приложение готово
-        const user = tg.initDataUnsafe?.user;
-        if (user) {
-            document.getElementById('user-info').innerText =
-                `Вы: ${user.first_name} ${user.last_name || ''} (@${user.username || 'нет'})`;
-        } else {
-            document.getElementById('user-info').innerText =
-                'Не удалось получить данные пользователя. Откройте приложение из Telegram.';
-        }
-    </script>
+    <!-- Библиотека сканера QR-кодов -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <!-- Наша логика -->
+    <script src="scanner.js"></script>
 </body>
 </html>
