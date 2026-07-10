@@ -21,7 +21,7 @@ function onScanSuccess(decodedText, decodedResult) {
         html5QrCode.stop().then(() => {
             readerDiv.style.display = 'none';
             startScanBtn.style.display = 'inline-block';
-        }).catch(err => console.error('Ошибка остановки:', err));
+        }).catch(err => console.error(err));
     }
     resultP.innerText = '✅ Сканировано: ' + decodedText;
     if (confirm('QR-код считан! Сохранить результат в файл?')) {
@@ -30,32 +30,34 @@ function onScanSuccess(decodedText, decodedResult) {
 }
 
 function onScanError(errorMessage) {
-    // Выводим ошибку в консоль для диагностики
-    console.log('Scan error:', errorMessage);
-    // Покажем на странице, что сканер пытается, но не находит
-    resultP.innerText = 'Ищу QR-код... (держите неподвижно)';
+    console.warn('Scan error:', errorMessage);
+    resultP.innerText = 'Ищу QR-код... Поднесите ближе и держите ровно';
 }
 
 startScanBtn.addEventListener('click', async () => {
     startScanBtn.style.display = 'none';
     readerDiv.style.display = 'block';
-    resultP.innerText = 'Наведите камеру на QR-код (2×2 см) и удерживайте неподвижно';
+    resultP.innerText = 'Запуск камеры...';
 
     html5QrCode = new Html5Qrcode("reader");
 
-    // Запрашиваем высокое разрешение (1280x720) — это улучшит распознавание мелких деталей
+    // Запрашиваем максимальное разрешение – это ключ для мелких кодов
     const cameraConfig = {
         facingMode: "environment",
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
     };
 
-    // Увеличиваем область поиска до 300x300, чтобы точно захватить код
+    // Увеличиваем область поиска до 400x400 – так сканер охватит весь кадр,
+    // а маленький код всё равно будет в центре. Это лучше, чем маленькая рамка.
     const config = {
         fps: 10,
-        qrbox: { width: 300, height: 300 },
+        qrbox: { width: 400, height: 400 },
         aspectRatio: 1.0
     };
+
+    // Включаем подробные логи библиотеки для отладки (смотрите консоль)
+    html5QrCode._logger = { log: (...args) => console.log('[QR-LOG]', ...args) };
 
     try {
         await html5QrCode.start(
@@ -64,10 +66,11 @@ startScanBtn.addEventListener('click', async () => {
             onScanSuccess,
             onScanError
         );
-        console.log('Камера запущена');
+        resultP.innerText = 'Наведите на QR-код (2×2 см) и медленно приближайте';
+        console.log('Камера запущена, разрешение запрошено 1920x1080');
     } catch (err) {
         console.error('Ошибка запуска камеры:', err);
-        alert('Не удалось запустить камеру. ' + err.message);
+        resultP.innerText = '❌ Не удалось запустить камеру: ' + (err.message || err);
         startScanBtn.style.display = 'inline-block';
         readerDiv.style.display = 'none';
     }
