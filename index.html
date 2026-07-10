@@ -16,7 +16,7 @@
             background: #2AABEE;
             color: white;
             border: none;
-            padding: 16px 32px;
+            padding: 14px 28px;
             border-radius: 10px;
             font-size: 18px;
             cursor: pointer;
@@ -44,9 +44,11 @@
 </head>
 <body>
     <h1>Сканер Data Matrix</h1>
-    <p>Нажмите кнопку, чтобы открыть сканер Telegram</p>
+    <p>Нажмите «Сканировать» для нативного сканера или загрузите фото</p>
 
     <button id="native-scan-btn">📷 Сканировать (камера Telegram)</button>
+    <br>
+    <button id="fallback-btn">📁 Загрузить фото (если не сработало)</button>
 
     <div id="crop-container">
         <img id="image-to-crop" alt="Обрезка">
