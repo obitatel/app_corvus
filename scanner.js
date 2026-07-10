@@ -48,7 +48,7 @@ startScanBtn.addEventListener('click', async () => {
     // Конфигурация: рамка 200x200, частота кадров 10
     const config = {
         fps: 10,
-        qrbox: { width: 200, height: 200 },
+        qrbox: { width: 10, height: 10 },
         // Попробуем аспектное соотношение, если нужно
         aspectRatio: 1.0
     };
