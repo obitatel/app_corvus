@@ -1,5 +1,3 @@
-// scanner.js - обновлённая версия для маленьких QR-кодов
-
 const startScanBtn = document.getElementById('start-scan-btn');
 const readerDiv = document.getElementById('reader');
 const resultP = document.getElementById('result');
@@ -25,17 +23,17 @@ function onScanSuccess(decodedText, decodedResult) {
             startScanBtn.style.display = 'inline-block';
         }).catch(err => console.error('Ошибка остановки:', err));
     }
-    resultP.innerText = 'Сканировано: ' + decodedText;
+    resultP.innerText = '✅ Сканировано: ' + decodedText;
     if (confirm('QR-код считан! Сохранить результат в файл?')) {
         saveTextAsFile(decodedText);
     }
 }
 
 function onScanError(errorMessage) {
-    // Выводим ошибку в консоль для диагностики — полезно понять, видит ли камера что-то похожее на QR
+    // Выводим ошибку в консоль для диагностики
     console.log('Scan error:', errorMessage);
-    // Также можно показывать пользователю, но не будем засорять интерфейс
-    // resultP.innerText = 'Поиск QR-кода... (ошибка: ' + errorMessage + ')';
+    // Покажем на странице, что сканер пытается, но не находит
+    resultP.innerText = 'Ищу QR-код... (держите неподвижно)';
 }
 
 startScanBtn.addEventListener('click', async () => {
@@ -45,22 +43,19 @@ startScanBtn.addEventListener('click', async () => {
 
     html5QrCode = new Html5Qrcode("reader");
 
-    // Конфигурация: рамка 200x200, частота кадров 10
+    // Запрашиваем высокое разрешение (1280x720) — это улучшит распознавание мелких деталей
+    const cameraConfig = {
+        facingMode: "environment",
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+    };
+
+    // Увеличиваем область поиска до 300x300, чтобы точно захватить код
     const config = {
         fps: 10,
-        qrbox: { width: 10, height: 10 },
-        // Попробуем аспектное соотношение, если нужно
+        qrbox: { width: 300, height: 300 },
         aspectRatio: 1.0
     };
-
-    // Дополнительные настройки камеры: попытка применить зум (работает не на всех устройствах)
-    const cameraConfig = {
-        facingMode: "environment"
-    };
-
-    // Некоторые устройства позволяют задать zoom через constraints, но html5-qrcode не поддерживает напрямую.
-    // Можно попробовать запросить разрешение побольше, чтобы улучшить распознавание.
-    // Альтернативно, если есть возможность, используем заднюю камеру с максимальным разрешением.
 
     try {
         await html5QrCode.start(
@@ -69,9 +64,10 @@ startScanBtn.addEventListener('click', async () => {
             onScanSuccess,
             onScanError
         );
+        console.log('Камера запущена');
     } catch (err) {
         console.error('Ошибка запуска камеры:', err);
-        alert('Не удалось запустить камеру: ' + err.message);
+        alert('Не удалось запустить камеру. ' + err.message);
         startScanBtn.style.display = 'inline-block';
         readerDiv.style.display = 'none';
     }
