@@ -2,10 +2,8 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Сканер QR-билетов</title>
-    <!-- Cropper.js CSS -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css" rel="stylesheet">
     <style>
         body {
             font-family: sans-serif;
@@ -17,7 +15,7 @@
             background: #2AABEE;
             color: white;
             border: none;
-            padding: 12px 24px;
+            padding: 14px 28px;
             border-radius: 8px;
             font-size: 16px;
             cursor: pointer;
@@ -32,38 +30,17 @@
             font-weight: bold;
             word-break: break-all;
         }
-        /* Контейнер для кропа */
-        #crop-container {
-            display: none;
-            max-width: 100%;
-            margin: 10px auto;
-        }
-        #image-to-crop {
-            max-width: 100%;
-            display: block;
-        }
     </style>
 </head>
 <body>
     <h1>Сканер лотерейных билетов</h1>
-    <p>Сфотографируйте QR-код, затем загрузите снимок и обведите код рамкой</p>
+    <p>Нажмите кнопку и отсканируйте QR-код</p>
 
-    <button id="upload-btn">Загрузить фото QR-кода</button>
-
-    <div id="crop-container">
-        <img id="image-to-crop" alt="Фото для обрезки">
-        <br>
-        <button id="crop-scan-btn">Сканировать выделенную область</button>
-        <button id="cancel-crop-btn">Отмена</button>
-    </div>
+    <button id="scan-btn">Сканировать QR-код</button>
 
     <p id="result"></p>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- Cropper.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
-    <!-- jsQR — более гибкий для canvas -->
-    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <script src="scanner.js"></script>
 </body>
 </html>
