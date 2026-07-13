@@ -1,11 +1,7 @@
 // --- Инициализация Telegram ---
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
-<<<<<<< HEAD
 else console.warn('Telegram Web App SDK не загружен');
-=======
-else console.warn('Telegram WebApp SDK не загружен');
->>>>>>> fc728c5 (Initial commit)
 
 document.addEventListener('DOMContentLoaded', function() {
 
@@ -26,14 +22,9 @@ document.addEventListener('DOMContentLoaded', function() {
     let stream = null;
     let decodeLoopId = null;
     let lastDecodeTime = 0;
-<<<<<<< HEAD
     const DECODE_INTERVAL = 100; // 10 кадров/сек
     // Уменьшенная область интереса – только центральные 45% кадра
     const ROI_RATIO = 0.45;
-=======
-    const DECODE_INTERVAL = 100; // чаще — 10 кадров/сек
-    const ROI_RATIO = 0.65; // чуть больше область
->>>>>>> fc728c5 (Initial commit)
     let cameras = [];
     let currentCamIdx = -1;
     let readBarcodesFn = null;
@@ -52,11 +43,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-<<<<<<< HEAD
     // --- Загрузка движка (с fallback) ---
-=======
-    // --- Загрузка движка (как раньше) ---
->>>>>>> fc728c5 (Initial commit)
     async function loadZXing() {
         const urls = [
             'https://esm.sh/zxing-wasm@2/reader',
@@ -77,11 +64,7 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('Не удалось загрузить zxing-wasm ни с одного CDN');
     }
 
-<<<<<<< HEAD
     // --- Камера ---
-=======
-    // --- Камера (как раньше) ---
->>>>>>> fc728c5 (Initial commit)
     async function refreshCameras() {
         try {
             const warm = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -108,21 +91,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 deviceId: { exact: cam.deviceId },
                 width: { ideal: 1920 },
                 height: { ideal: 1080 },
-<<<<<<< HEAD
                 // Явно запрашиваем непрерывную фокусировку (если поддерживается)
-=======
->>>>>>> fc728c5 (Initial commit)
                 advanced: [{ focusMode: 'continuous' }]
             }
         };
         return await navigator.mediaDevices.getUserMedia(constraints);
     }
 
-<<<<<<< HEAD
     // --- Декодирование с улучшенной предобработкой и новыми параметрами ---
-=======
-    // --- Декодирование с улучшенной предобработкой ---
->>>>>>> fc728c5 (Initial commit)
     function decodeLoop() {
         if (!isScanning) return;
         decodeLoopId = requestAnimationFrame(decodeLoop);
@@ -135,10 +111,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const vw = video.videoWidth, vh = video.videoHeight;
         if (!vw || !vh) return;
 
-<<<<<<< HEAD
         // Вырезаем центральную область ROI_RATIO
-=======
->>>>>>> fc728c5 (Initial commit)
         const cropW = vw * ROI_RATIO, cropH = vh * ROI_RATIO;
         const sx = (vw - cropW) / 2, sy = (vh - cropH) / 2;
 
@@ -146,28 +119,16 @@ document.addEventListener('DOMContentLoaded', function() {
         canvas.height = cropH;
         ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
 
-<<<<<<< HEAD
         // Повышаем контраст и бинаризация (чёрно-белое)
         const imageData = ctx.getImageData(0, 0, cropW, cropH);
         const data = imageData.data;
         for (let i = 0; i < data.length; i += 4) {
             const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-=======
-        // Повышаем контраст и яркость (простая бинаризация)
-        const imageData = ctx.getImageData(0, 0, cropW, cropH);
-        const data = imageData.data;
-        // Упрощаем: преобразуем в оттенки серого и повышаем контраст
-        for (let i = 0; i < data.length; i += 4) {
-            const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-            // Контраст: если светлее порога — белый, иначе чёрный (адаптивный порог)
-            // Простой вариант: порог = 128
->>>>>>> fc728c5 (Initial commit)
             const val = gray > 128 ? 255 : 0;
             data[i] = data[i+1] = data[i+2] = val;
         }
         ctx.putImageData(imageData, 0, 0);
 
-<<<<<<< HEAD
         const processedImageData = ctx.getImageData(0, 0, cropW, cropH);
         if (!readBarcodesFn) return;
 
@@ -178,47 +139,20 @@ document.addEventListener('DOMContentLoaded', function() {
             tryRotate: true,      // попытка декодирования при повороте
             tryDenoise: true,     // попытка подавления шума
             maxSymbols: 1,
-=======
-        // Снова читаем уже обработанное изображение
-        const processedImageData = ctx.getImageData(0, 0, cropW, cropH);
-
-        if (!readBarcodesFn) return;
-
-        readBarcodesFn(processedImageData, {
-            formats: ['DataMatrix'],
-            tryHarder: true,
-            maxSymbols: 1,
-            // Дополнительные параметры для улучшения
-            returnErrors: false,
-            // Увеличение чувствительности
-            barcodeFormat: 'DataMatrix'
->>>>>>> fc728c5 (Initial commit)
         }).then(results => {
             if (!isScanning) return;
             if (results && results.length > 0 && results[0].text) {
                 const text = results[0].text;
                 setResult(text);
                 setStatus('✅ Код найден!');
-<<<<<<< HEAD
                 // Останавливаем сканирование после успеха, чтобы не тратить ресурсы
                 stopScanning();
                 // Но оставляем кнопку "Запустить" активной для повторного сканирования
-=======
-                // Не останавливаем автоматически — пусть пользователь сам нажмёт "Стоп"
-                // либо можно остановить, но тогда нужно снова запускать для повторного скана
-                // Я предлагаю остановить, чтобы не было множественных срабатываний
-                stopScanning();
-                // Но после остановки показываем "Стоп" отключённой, а "Запустить" активной
->>>>>>> fc728c5 (Initial commit)
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
             }
         }).catch(err => {
-<<<<<<< HEAD
             // Ошибки игнорируем (обычно это "не найден код")
-=======
-            // игнорируем
->>>>>>> fc728c5 (Initial commit)
         });
     }
 
@@ -242,7 +176,6 @@ document.addEventListener('DOMContentLoaded', function() {
             stream = newStream;
             video.srcObject = stream;
             await video.play();
-<<<<<<< HEAD
 
             // Попытка принудительно установить фокус (если трек поддерживает)
             try {
@@ -255,8 +188,6 @@ document.addEventListener('DOMContentLoaded', function() {
             } catch (e) {
                 console.warn('Не удалось применить focusMode:', e);
             }
-=======
->>>>>>> fc728c5 (Initial commit)
 
             isScanning = true;
             stopBtn.disabled = false;
@@ -299,11 +230,7 @@ document.addEventListener('DOMContentLoaded', function() {
         await startScanning();
     }
 
-<<<<<<< HEAD
     // --- Отправка в Telegram ---
-=======
-    // --- Отправка ---
->>>>>>> fc728c5 (Initial commit)
     function sendDataToTelegram(data) {
         if (!data) return;
         if (tg) {
@@ -316,8 +243,6 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             alert('Данные: ' + data);
         }
-        // После отправки можно очистить результат или оставить
-        // Пока оставляем для возможности повторно отправить
     }
 
     // --- Обработчики ---
