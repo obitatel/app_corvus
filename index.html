@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>DataMatrix Scanner</title>
     <style>
-        /* Базовые сбросы и стили для удобства */
+        /* Базовые сбросы и стили */
         * {
             box-sizing: border-box;
             margin: 0;
@@ -41,7 +41,7 @@
         #video-container {
             position: relative;
             width: 100%;
-            padding-top: 75%; /* Соотношение сторон 4:3 */
+            padding-top: 75%; /* Соотношение 4:3 */
             background: #000;
             border-radius: 12px;
             overflow: hidden;
@@ -55,7 +55,7 @@
             height: 100%;
             object-fit: cover;
         }
-        /* Оверлей для статуса сканирования */
+        /* Оверлей статуса */
         #scan-status {
             position: absolute;
             bottom: 10px;
@@ -68,8 +68,9 @@
             font-size: 14px;
             pointer-events: none;
             white-space: nowrap;
+            transition: background 0.3s;
         }
-        /* Блок с результатом */
+        /* Результат */
         #result-area {
             background: #f8f9fa;
             border-radius: 12px;
@@ -91,7 +92,7 @@
             flex-wrap: wrap;
         }
         .btn {
-            padding: 12px 24px;
+            padding: 12px 20px;
             border: none;
             border-radius: 30px;
             font-size: 16px;
@@ -99,7 +100,7 @@
             cursor: pointer;
             transition: background 0.2s, opacity 0.2s;
             flex: 1 1 auto;
-            min-width: 100px;
+            min-width: 80px;
         }
         .btn-primary {
             background: #0088cc;
@@ -122,18 +123,28 @@
         .btn-success:hover {
             background: #1e7e34;
         }
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
         .btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
         #send-data-btn {
-            display: none; /* Скрыта по умолчанию, появляется после сканирования */
+            display: none; /* скрыта до получения результата */
         }
-        /* Адаптив для мобильных */
+        #switch-camera-btn {
+            display: none; /* показывается, если доступно несколько камер */
+        }
+        /* Адаптив */
         @media (max-width: 480px) {
             .container { padding: 12px; }
             h1 { font-size: 18px; }
-            .btn { font-size: 14px; padding: 10px 16px; }
+            .btn { font-size: 14px; padding: 10px 14px; min-width: 60px; }
         }
     </style>
 </head>
@@ -145,7 +156,7 @@
     <!-- Видео-контейнер -->
     <div id="video-container">
         <video id="video" playsinline></video>
-        <div id="scan-status">Ожидание запуска</div>
+        <div id="scan-status">Готов к работе</div>
     </div>
 
     <!-- Область результата -->
@@ -157,17 +168,18 @@
     <div class="button-group">
         <button id="start-btn" class="btn btn-primary">▶ Запустить</button>
         <button id="stop-btn" class="btn btn-danger" disabled>⏹ Остановить</button>
-        <button id="send-data-btn" class="btn btn-success">📤 Отправить в Telegram</button>
+        <button id="switch-camera-btn" class="btn btn-secondary">🔄 Камера</button>
+        <button id="send-data-btn" class="btn btn-success">📤 Отправить</button>
     </div>
 </div>
 
-<!-- Подключаем Telegram Web App SDK -->
+<!-- Telegram Web App SDK -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-<!-- Подключаем ZXing библиотеку через CDN -->
+<!-- ZXing библиотека (CDN) -->
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.23.0/umd/index.min.js"></script>
 
-<!-- Подключаем наш основной скрипт -->
+<!-- Наш основной скрипт (scanner.js) -->
 <script src="scanner.js"></script>
 
 </body>
