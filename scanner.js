@@ -22,11 +22,11 @@ document.addEventListener('DOMContentLoaded', function() {
     let stream = null;
     let decodeLoopId = null;
     let lastDecodeTime = 0;
-    const DECODE_INTERVAL = 150; // мс
-    const ROI_RATIO = 0.6;
+    const DECODE_INTERVAL = 100; // чаще — 10 кадров/сек
+    const ROI_RATIO = 0.65; // чуть больше область
     let cameras = [];
     let currentCamIdx = -1;
-    let zxingReady = false; // флаг загрузки
+    let readBarcodesFn = null;
 
     // --- UI ---
     function setStatus(text, error = false) {
@@ -36,16 +36,19 @@ document.addEventListener('DOMContentLoaded', function() {
     function setResult(text) {
         resultText.textContent = text || 'Отсканированный код появится здесь';
         sendBtn.style.display = text ? 'inline-block' : 'none';
+        if (text) {
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
     }
 
-    // --- ЗАГРУЗКА ДВИЖКА (с fallback) ---
+    // --- Загрузка движка (как раньше) ---
     async function loadZXing() {
         const urls = [
             'https://esm.sh/zxing-wasm@2/reader',
             'https://cdn.jsdelivr.net/npm/zxing-wasm@2/dist/reader/index.js',
             'https://unpkg.com/zxing-wasm@2/dist/reader/index.js'
         ];
-
         for (const url of urls) {
             try {
                 const module = await import(url);
@@ -60,11 +63,8 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('Не удалось загрузить zxing-wasm ни с одного CDN');
     }
 
-    let readBarcodesFn = null;
-
-    // --- Камера ---
+    // --- Камера (как раньше) ---
     async function refreshCameras() {
-        // прогревочный запрос, чтобы заполнить labels
         try {
             const warm = await navigator.mediaDevices.getUserMedia({ video: true });
             warm.getTracks().forEach(t => t.stop());
@@ -77,9 +77,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function pickBackIndex() {
         let idx = cameras.findIndex(d => /back|rear|environment/i.test(d.label));
         if (idx !== -1) return idx;
-        const nonFront = cameras
-            .map((d, i) => ({ d, i }))
-            .filter(({ d }) => !/front|user|face/i.test(d.label));
+        const nonFront = cameras.map((d, i) => ({ d, i })).filter(({ d }) => !/front|user|face/i.test(d.label));
         if (nonFront.length) return nonFront[nonFront.length - 1].i;
         return cameras.length > 1 ? cameras.length - 1 : 0;
     }
@@ -90,15 +88,15 @@ document.addEventListener('DOMContentLoaded', function() {
         const constraints = {
             video: {
                 deviceId: { exact: cam.deviceId },
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
                 advanced: [{ focusMode: 'continuous' }]
             }
         };
         return await navigator.mediaDevices.getUserMedia(constraints);
     }
 
-    // --- Декодирование ---
+    // --- Декодирование с улучшенной предобработкой ---
     function decodeLoop() {
         if (!isScanning) return;
         decodeLoopId = requestAnimationFrame(decodeLoop);
@@ -118,27 +116,48 @@ document.addEventListener('DOMContentLoaded', function() {
         canvas.height = cropH;
         ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
 
-        let imageData;
-        try {
-            imageData = ctx.getImageData(0, 0, cropW, cropH);
-        } catch (e) { return; }
+        // Повышаем контраст и яркость (простая бинаризация)
+        const imageData = ctx.getImageData(0, 0, cropW, cropH);
+        const data = imageData.data;
+        // Упрощаем: преобразуем в оттенки серого и повышаем контраст
+        for (let i = 0; i < data.length; i += 4) {
+            const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
+            // Контраст: если светлее порога — белый, иначе чёрный (адаптивный порог)
+            // Простой вариант: порог = 128
+            const val = gray > 128 ? 255 : 0;
+            data[i] = data[i+1] = data[i+2] = val;
+        }
+        ctx.putImageData(imageData, 0, 0);
 
-        if (!readBarcodesFn) return; // если движок не загружен – ничего не делаем
+        // Снова читаем уже обработанное изображение
+        const processedImageData = ctx.getImageData(0, 0, cropW, cropH);
 
-        readBarcodesFn(imageData, {
+        if (!readBarcodesFn) return;
+
+        readBarcodesFn(processedImageData, {
             formats: ['DataMatrix'],
             tryHarder: true,
-            maxSymbols: 1 // правильное имя параметра!
+            maxSymbols: 1,
+            // Дополнительные параметры для улучшения
+            returnErrors: false,
+            // Увеличение чувствительности
+            barcodeFormat: 'DataMatrix'
         }).then(results => {
             if (!isScanning) return;
             if (results && results.length > 0 && results[0].text) {
                 const text = results[0].text;
                 setResult(text);
                 setStatus('✅ Код найден!');
+                // Не останавливаем автоматически — пусть пользователь сам нажмёт "Стоп"
+                // либо можно остановить, но тогда нужно снова запускать для повторного скана
+                // Я предлагаю остановить, чтобы не было множественных срабатываний
                 stopScanning();
+                // Но после остановки показываем "Стоп" отключённой, а "Запустить" активной
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
             }
         }).catch(err => {
-            // тихо игнорируем ошибки (они часто от NotFound)
+            // игнорируем
         });
     }
 
@@ -149,14 +168,11 @@ document.addEventListener('DOMContentLoaded', function() {
             setStatus('⏳ Запуск...');
             startBtn.disabled = true;
 
-            // 1) Загружаем движок (если ещё не загружен)
             if (!readBarcodesFn) {
                 setStatus('⏳ Загрузка движка...');
                 readBarcodesFn = await loadZXing();
-                zxingReady = true;
             }
 
-            // 2) Получаем камеры
             await refreshCameras();
             if (!cameras.length) throw new Error('Камер не найдено');
 
@@ -220,6 +236,8 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             alert('Данные: ' + data);
         }
+        // После отправки можно очистить результат или оставить
+        // Пока оставляем для возможности повторно отправить
     }
 
     // --- Обработчики ---
