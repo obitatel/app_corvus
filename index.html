@@ -2,64 +2,173 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Сканер Data Matrix</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DataMatrix Scanner</title>
     <style>
-        body {
-            font-family: sans-serif;
-            text-align: center;
-            padding: 20px;
+        /* Базовые сбросы и стили для удобства */
+        * {
+            box-sizing: border-box;
             margin: 0;
+            padding: 0;
         }
-        button {
-            background: #2AABEE;
-            color: white;
-            border: none;
-            padding: 14px 28px;
-            border-radius: 10px;
-            font-size: 18px;
-            cursor: pointer;
-            margin: 10px;
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f0f2f5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 16px;
+            color: #333;
         }
-        #result {
-            margin-top: 20px;
-            font-size: 20px;
-            font-weight: bold;
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+            padding: 20px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 {
+            font-size: 22px;
+            margin-bottom: 16px;
+            color: #1a1a1a;
+        }
+        /* Контейнер для видео */
+        #video-container {
+            position: relative;
+            width: 100%;
+            padding-top: 75%; /* Соотношение сторон 4:3 */
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 16px;
+        }
+        #video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        /* Оверлей для статуса сканирования */
+        #scan-status {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        /* Блок с результатом */
+        #result-area {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 16px;
+            min-height: 50px;
+            font-size: 14px;
             word-break: break-all;
         }
-        #crop-container {
-            display: none;
-            margin: 10px auto;
-            max-width: 100%;
+        #result-text {
+            color: #0d6efd;
+            font-weight: 500;
         }
-        #image-to-crop {
-            max-width: 100%;
-            display: block;
+        /* Кнопки */
+        .button-group {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 30px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s, opacity 0.2s;
+            flex: 1 1 auto;
+            min-width: 100px;
+        }
+        .btn-primary {
+            background: #0088cc;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #006699;
+        }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        .btn-danger:hover {
+            background: #b02a37;
+        }
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        .btn-success:hover {
+            background: #1e7e34;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #send-data-btn {
+            display: none; /* Скрыта по умолчанию, появляется после сканирования */
+        }
+        /* Адаптив для мобильных */
+        @media (max-width: 480px) {
+            .container { padding: 12px; }
+            h1 { font-size: 18px; }
+            .btn { font-size: 14px; padding: 10px 16px; }
         }
     </style>
 </head>
 <body>
-    <h1>Сканер Data Matrix</h1>
-    <p>Сфотографируйте код, затем обведите и нажмите «Сканировать»</p>
 
-    <button id="upload-btn">📁 Загрузить фото Data Matrix</button>
+<div class="container">
+    <h1>📷 Сканер Data Matrix</h1>
 
-    <div id="crop-container">
-        <img id="image-to-crop" alt="Обрезка">
-        <br>
-        <button id="crop-scan-btn">🔍 Сканировать выделенное</button>
-        <button id="cancel-crop-btn">↩️ Отмена</button>
+    <!-- Видео-контейнер -->
+    <div id="video-container">
+        <video id="video" playsinline></video>
+        <div id="scan-status">Ожидание запуска</div>
     </div>
 
-    <p id="result"></p>
+    <!-- Область результата -->
+    <div id="result-area">
+        <span id="result-text">Отсканированный код появится здесь</span>
+    </div>
 
-    <!-- Скрытый div для Html5Qrcode (обязателен) -->
-    <div id="reader" style="display:none;"></div>
+    <!-- Кнопки управления -->
+    <div class="button-group">
+        <button id="start-btn" class="btn btn-primary">▶ Запустить</button>
+        <button id="stop-btn" class="btn btn-danger" disabled>⏹ Остановить</button>
+        <button id="send-data-btn" class="btn btn-success">📤 Отправить в Telegram</button>
+    </div>
+</div>
 
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
-    <script src="https://unpkg.com/html5-qrcode"></script>
-    <script src="scanner.js"></script>
+<!-- Подключаем Telegram Web App SDK -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<!-- Подключаем ZXing библиотеку через CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.23.0/umd/index.min.js"></script>
+
+<!-- Подключаем наш основной скрипт -->
+<script src="scanner.js"></script>
+
 </body>
 </html>
