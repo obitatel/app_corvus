@@ -1,7 +1,7 @@
 // --- Инициализация Telegram ---
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
-else console.warn('Telegram WebApp SDK не загружен');
+else console.warn('Telegram Web App SDK не загружен');
 
 document.addEventListener('DOMContentLoaded', function() {
 
@@ -22,8 +22,9 @@ document.addEventListener('DOMContentLoaded', function() {
     let stream = null;
     let decodeLoopId = null;
     let lastDecodeTime = 0;
-    const DECODE_INTERVAL = 100; // чаще — 10 кадров/сек
-    const ROI_RATIO = 0.65; // чуть больше область
+    const DECODE_INTERVAL = 100; // 10 кадров/сек
+    // Уменьшенная область интереса – только центральные 45% кадра
+    const ROI_RATIO = 0.45;
     let cameras = [];
     let currentCamIdx = -1;
     let readBarcodesFn = null;
@@ -42,7 +43,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // --- Загрузка движка (как раньше) ---
+    // --- Загрузка движка (с fallback) ---
     async function loadZXing() {
         const urls = [
             'https://esm.sh/zxing-wasm@2/reader',
@@ -63,7 +64,7 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('Не удалось загрузить zxing-wasm ни с одного CDN');
     }
 
-    // --- Камера (как раньше) ---
+    // --- Камера ---
     async function refreshCameras() {
         try {
             const warm = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -90,13 +91,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 deviceId: { exact: cam.deviceId },
                 width: { ideal: 1920 },
                 height: { ideal: 1080 },
+                // Явно запрашиваем непрерывную фокусировку (если поддерживается)
                 advanced: [{ focusMode: 'continuous' }]
             }
         };
         return await navigator.mediaDevices.getUserMedia(constraints);
     }
 
-    // --- Декодирование с улучшенной предобработкой ---
+    // --- Декодирование с улучшенной предобработкой и новыми параметрами ---
     function decodeLoop() {
         if (!isScanning) return;
         decodeLoopId = requestAnimationFrame(decodeLoop);
@@ -109,6 +111,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const vw = video.videoWidth, vh = video.videoHeight;
         if (!vw || !vh) return;
 
+        // Вырезаем центральную область ROI_RATIO
         const cropW = vw * ROI_RATIO, cropH = vh * ROI_RATIO;
         const sx = (vw - cropW) / 2, sy = (vh - cropH) / 2;
 
@@ -116,48 +119,40 @@ document.addEventListener('DOMContentLoaded', function() {
         canvas.height = cropH;
         ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
 
-        // Повышаем контраст и яркость (простая бинаризация)
+        // Повышаем контраст и бинаризация (чёрно-белое)
         const imageData = ctx.getImageData(0, 0, cropW, cropH);
         const data = imageData.data;
-        // Упрощаем: преобразуем в оттенки серого и повышаем контраст
         for (let i = 0; i < data.length; i += 4) {
             const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-            // Контраст: если светлее порога — белый, иначе чёрный (адаптивный порог)
-            // Простой вариант: порог = 128
             const val = gray > 128 ? 255 : 0;
             data[i] = data[i+1] = data[i+2] = val;
         }
         ctx.putImageData(imageData, 0, 0);
 
-        // Снова читаем уже обработанное изображение
         const processedImageData = ctx.getImageData(0, 0, cropW, cropH);
-
         if (!readBarcodesFn) return;
 
+        // Запускаем декодирование с расширенными параметрами
         readBarcodesFn(processedImageData, {
             formats: ['DataMatrix'],
-            tryHarder: true,
+            tryHarder: true,      // усиленный поиск
+            tryRotate: true,      // попытка декодирования при повороте
+            tryDenoise: true,     // попытка подавления шума
             maxSymbols: 1,
-            // Дополнительные параметры для улучшения
-            returnErrors: false,
-            // Увеличение чувствительности
-            barcodeFormat: 'DataMatrix'
         }).then(results => {
             if (!isScanning) return;
             if (results && results.length > 0 && results[0].text) {
                 const text = results[0].text;
                 setResult(text);
                 setStatus('✅ Код найден!');
-                // Не останавливаем автоматически — пусть пользователь сам нажмёт "Стоп"
-                // либо можно остановить, но тогда нужно снова запускать для повторного скана
-                // Я предлагаю остановить, чтобы не было множественных срабатываний
+                // Останавливаем сканирование после успеха, чтобы не тратить ресурсы
                 stopScanning();
-                // Но после остановки показываем "Стоп" отключённой, а "Запустить" активной
+                // Но оставляем кнопку "Запустить" активной для повторного сканирования
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
             }
         }).catch(err => {
-            // игнорируем
+            // Ошибки игнорируем (обычно это "не найден код")
         });
     }
 
@@ -181,6 +176,18 @@ document.addEventListener('DOMContentLoaded', function() {
             stream = newStream;
             video.srcObject = stream;
             await video.play();
+
+            // Попытка принудительно установить фокус (если трек поддерживает)
+            try {
+                const track = stream.getVideoTracks()[0];
+                if (track && track.applyConstraints) {
+                    await track.applyConstraints({
+                        advanced: [{ focusMode: 'continuous' }]
+                    });
+                }
+            } catch (e) {
+                console.warn('Не удалось применить focusMode:', e);
+            }
 
             isScanning = true;
             stopBtn.disabled = false;
@@ -223,7 +230,7 @@ document.addEventListener('DOMContentLoaded', function() {
         await startScanning();
     }
 
-    // --- Отправка ---
+    // --- Отправка в Telegram ---
     function sendDataToTelegram(data) {
         if (!data) return;
         if (tg) {
@@ -236,8 +243,6 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             alert('Данные: ' + data);
         }
-        // После отправки можно очистить результат или оставить
-        // Пока оставляем для возможности повторно отправить
     }
 
     // --- Обработчики ---

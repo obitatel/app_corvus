@@ -53,17 +53,18 @@
             height: 100%;
             object-fit: cover;
         }
-        /* Рамка прицеливания — визуально показывает ROI, который реально сканируется */
+        /* Рамка прицеливания — соответствует ROI (45% от кадра) */
         #scan-frame {
             position: absolute;
-            top: 20%;
-            left: 20%;
-            width: 60%;
-            height: 60%;
+            top: 27.5%;   /* (1 - 0.45) / 2 * 100% */
+            left: 27.5%;
+            width: 45%;
+            height: 45%;
             border: 3px solid rgba(0, 200, 120, 0.85);
             border-radius: 12px;
             box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.25);
             pointer-events: none;
+            display: none; /* скрыта до запуска */
         }
         #scan-status {
             position: absolute;
@@ -139,7 +140,7 @@
         <div id="scan-status">Готов к работе</div>
     </div>
 
-    <!-- Скрытый canvas — используется только для захвата и кропа кадра, на экране не виден -->
+    <!-- Скрытый canvas для захвата кадров -->
     <canvas id="capture-canvas" style="display:none;"></canvas>
 
     <div id="result-area">
@@ -157,7 +158,7 @@
 <!-- Telegram Web App SDK -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-<!-- scanner.js подключаем как ES-модуль, чтобы использовать import из zxing-wasm по CDN -->
+<!-- scanner.js как ES-модуль -->
 <script type="module" src="scanner.js"></script>
 
 </body>
