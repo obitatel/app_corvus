@@ -22,9 +22,6 @@
             cursor: pointer;
             margin: 10px;
         }
-        button:disabled {
-            background: #aaa;
-        }
         #result {
             margin-top: 20px;
             font-size: 20px;
@@ -44,11 +41,9 @@
 </head>
 <body>
     <h1>Сканер Data Matrix</h1>
-    <p>Нажмите «Сканировать» для нативного сканера или загрузите фото</p>
+    <p>Сфотографируйте код, затем обведите и нажмите «Сканировать»</p>
 
-    <button id="native-scan-btn">📷 Сканировать (камера Telegram)</button>
-    <br>
-    <button id="fallback-btn">📁 Загрузить фото (если не сработало)</button>
+    <button id="upload-btn">📁 Загрузить фото Data Matrix</button>
 
     <div id="crop-container">
         <img id="image-to-crop" alt="Обрезка">
@@ -61,7 +56,7 @@
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
-    <script src="https://unpkg.com/@zxing/library@0.19.2/umd/index.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
     <script src="scanner.js"></script>
 </body>
 </html>
