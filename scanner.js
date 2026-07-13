@@ -1,314 +1,240 @@
-// scanner.js — версия на zxing-wasm (zxing-cpp через WebAssembly)
-// Движок распознавания Data Matrix у zxing-wasm на порядок лучше, чем у @zxing/library (zxing-js),
-// который был портирован вручную и слабо справлялся с Data Matrix.
-
-import { readBarcodes } from 'https://cdn.jsdelivr.net/npm/zxing-wasm@2/dist/reader/index.js';
-
-// --- Инициализация Telegram Web App ---
+// --- Инициализация Telegram ---
 const tg = window.Telegram?.WebApp;
-if (tg) {
-    tg.ready();
-    tg.expand();
-} else {
-    console.warn('Telegram Web App SDK не загружен. Работа в обычном браузере.');
-}
+if (tg) { tg.ready(); tg.expand(); }
+else console.warn('Telegram WebApp SDK не загружен');
 
-document.addEventListener('DOMContentLoaded', function () {
+document.addEventListener('DOMContentLoaded', function() {
 
-    // --- Элементы DOM ---
-    const videoElement = document.getElementById('video');
-    const startBtn = document.getElementById('start-btn');
-    const stopBtn = document.getElementById('stop-btn');
-    const sendDataBtn = document.getElementById('send-data-btn');
-    const resultText = document.getElementById('result-text');
-    const scanStatus = document.getElementById('scan-status');
-    const scanFrame = document.getElementById('scan-frame');
-    const switchCameraBtn = document.getElementById('switch-camera-btn');
+    // --- Элементы ---
+    const video = document.getElementById('video');
     const canvas = document.getElementById('capture-canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-    if (!videoElement || !startBtn || !stopBtn || !sendDataBtn || !resultText || !scanStatus || !canvas) {
-        console.error('Один или несколько элементов DOM не найдены!');
-        return;
-    }
+    const startBtn = document.getElementById('start-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const sendBtn = document.getElementById('send-data-btn');
+    const resultText = document.getElementById('result-text');
+    const scanStatus = document.getElementById('scan-status');
+    const switchBtn = document.getElementById('switch-camera-btn');
+    const scanFrame = document.getElementById('scan-frame');
 
     // --- Состояние ---
     let isScanning = false;
-    let currentStream = null;
+    let stream = null;
     let decodeLoopId = null;
     let lastDecodeTime = 0;
-    const DECODE_INTERVAL_MS = 150; // ~6-7 кадров/сек — достаточно для сканера, щадит слабые устройства
-
-    let availableCameras = [];   // все videoinput устройства
-    let currentCameraIndex = -1; // индекс текущей камеры в availableCameras
-
-    // Доля кадра, которую реально отдаём в декодер (ROI). 0.6 = центральные 60% по каждой оси.
+    const DECODE_INTERVAL = 150; // мс
     const ROI_RATIO = 0.6;
+    let cameras = [];
+    let currentCamIdx = -1;
+    let zxingReady = false; // флаг загрузки
 
-    // --- Функции обновления UI ---
-    function setStatus(text, isError = false) {
+    // --- UI ---
+    function setStatus(text, error = false) {
         scanStatus.textContent = text;
-        scanStatus.style.background = isError ? 'rgba(220, 53, 69, 0.9)' : 'rgba(0,0,0,0.7)';
+        scanStatus.style.background = error ? 'rgba(220,53,69,0.9)' : 'rgba(0,0,0,0.7)';
     }
-
     function setResult(text) {
         resultText.textContent = text || 'Отсканированный код появится здесь';
-        sendDataBtn.style.display = text ? 'inline-block' : 'none';
+        sendBtn.style.display = text ? 'inline-block' : 'none';
     }
 
-    // --- 1. Получение списка камер с надёжным определением тыловой ---
-    // Важно: до выдачи разрешения на камеру label у устройств пустые, поэтому сначала
-    // открываем временный поток (любой), а потом уже enumerateDevices() отдаёт labels.
-    async function refreshCameraList() {
-        // "Прогревочный" запрос — только чтобы получить разрешение и заполнить labels
-        if (!availableCameras.length) {
+    // --- ЗАГРУЗКА ДВИЖКА (с fallback) ---
+    async function loadZXing() {
+        const urls = [
+            'https://esm.sh/zxing-wasm@2/reader',
+            'https://cdn.jsdelivr.net/npm/zxing-wasm@2/dist/reader/index.js',
+            'https://unpkg.com/zxing-wasm@2/dist/reader/index.js'
+        ];
+
+        for (const url of urls) {
             try {
-                const warm = await navigator.mediaDevices.getUserMedia({ video: true });
-                warm.getTracks().forEach(t => t.stop());
+                const module = await import(url);
+                if (module && typeof module.readBarcodes === 'function') {
+                    console.log('✅ zxing-wasm загружен через', url);
+                    return module.readBarcodes;
+                }
             } catch (e) {
-                // Если разрешение не дали — enumerateDevices всё равно отработает,
-                // но без labels. Ошибку пробросим дальше при попытке открыть поток.
-                console.warn('Не удалось получить прогревочный доступ к камере:', e);
+                console.warn('❌ не удалось загрузить:', url, e);
             }
         }
-
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        availableCameras = devices.filter(d => d.kind === 'videoinput');
-        return availableCameras;
+        throw new Error('Не удалось загрузить zxing-wasm ни с одного CDN');
     }
 
-    function pickBackCameraIndex(cameras) {
-        // 1) Ищем по ключевым словам в label
+    let readBarcodesFn = null;
+
+    // --- Камера ---
+    async function refreshCameras() {
+        // прогревочный запрос, чтобы заполнить labels
+        try {
+            const warm = await navigator.mediaDevices.getUserMedia({ video: true });
+            warm.getTracks().forEach(t => t.stop());
+        } catch {}
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        cameras = devices.filter(d => d.kind === 'videoinput');
+        return cameras;
+    }
+
+    function pickBackIndex() {
         let idx = cameras.findIndex(d => /back|rear|environment/i.test(d.label));
         if (idx !== -1) return idx;
-
-        // 2) Явно исключаем фронтальные по label
         const nonFront = cameras
             .map((d, i) => ({ d, i }))
             .filter(({ d }) => !/front|user|face/i.test(d.label));
-
-        if (nonFront.length > 0) {
-            // Эвристика: на большинстве телефонов тыловая камера идёт последней в списке
-            return nonFront[nonFront.length - 1].i;
-        }
-
-        // 3) Совсем нет информации (labels пустые) — берём последнюю камеру в списке,
-        // так как на многих устройствах порядок: [front, back] или [front, back, back-wide...]
-        if (cameras.length > 1) return cameras.length - 1;
-
-        return cameras.length > 0 ? 0 : -1;
+        if (nonFront.length) return nonFront[nonFront.length - 1].i;
+        return cameras.length > 1 ? cameras.length - 1 : 0;
     }
 
-    // --- 2. Запуск видеопотока по индексу камеры ---
-    async function openCameraStream(index) {
-        const camera = availableCameras[index];
-        if (!camera) throw new Error('Камера не найдена');
-
+    async function openCamera(index) {
+        const cam = cameras[index];
+        if (!cam) throw new Error('Камера не найдена');
         const constraints = {
             video: {
-                deviceId: { exact: camera.deviceId },
+                deviceId: { exact: cam.deviceId },
                 width: { ideal: 1280 },
                 height: { ideal: 720 },
-                // continuous focus, если поддерживается устройством
                 advanced: [{ focusMode: 'continuous' }]
             }
         };
-
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        return stream;
+        return await navigator.mediaDevices.getUserMedia(constraints);
     }
 
-    // --- 3. Основной цикл декодирования с throttling и ROI-кропом ---
+    // --- Декодирование ---
     function decodeLoop() {
         if (!isScanning) return;
-
         decodeLoopId = requestAnimationFrame(decodeLoop);
 
         const now = performance.now();
-        if (now - lastDecodeTime < DECODE_INTERVAL_MS) return;
-        if (videoElement.readyState < videoElement.HAVE_CURRENT_DATA) return;
+        if (now - lastDecodeTime < DECODE_INTERVAL) return;
+        if (video.readyState < video.HAVE_CURRENT_DATA) return;
         lastDecodeTime = now;
 
-        const vw = videoElement.videoWidth;
-        const vh = videoElement.videoHeight;
+        const vw = video.videoWidth, vh = video.videoHeight;
         if (!vw || !vh) return;
 
-        // Считаем ROI — центральный квадрат/прямоугольник кадра
-        const cropW = vw * ROI_RATIO;
-        const cropH = vh * ROI_RATIO;
-        const sx = (vw - cropW) / 2;
-        const sy = (vh - cropH) / 2;
+        const cropW = vw * ROI_RATIO, cropH = vh * ROI_RATIO;
+        const sx = (vw - cropW) / 2, sy = (vh - cropH) / 2;
 
         canvas.width = cropW;
         canvas.height = cropH;
-        ctx.drawImage(videoElement, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
+        ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
 
         let imageData;
         try {
             imageData = ctx.getImageData(0, 0, cropW, cropH);
-        } catch (e) {
-            console.warn('Не удалось прочитать кадр с canvas:', e);
-            return;
-        }
+        } catch (e) { return; }
 
-        readBarcodes(imageData, {
+        if (!readBarcodesFn) return; // если движок не загружен – ничего не делаем
+
+        readBarcodesFn(imageData, {
             formats: ['DataMatrix'],
             tryHarder: true,
-            maxNumberOfSymbols: 1
+            maxSymbols: 1 // правильное имя параметра!
         }).then(results => {
             if (!isScanning) return;
             if (results && results.length > 0 && results[0].text) {
                 const text = results[0].text;
-                console.log('Data Matrix отсканирован:', text);
                 setResult(text);
                 setStatus('✅ Код найден!');
                 stopScanning();
             }
         }).catch(err => {
-            console.warn('Ошибка декодирования:', err);
+            // тихо игнорируем ошибки (они часто от NotFound)
         });
     }
 
-    // --- 4. Запуск сканирования ---
+    // --- Запуск ---
     async function startScanning() {
         if (isScanning) return;
-
         try {
-            setStatus('⏳ Запуск сканера...');
+            setStatus('⏳ Запуск...');
             startBtn.disabled = true;
 
-            await refreshCameraList();
-            if (!availableCameras.length) {
-                throw new Error('Камеры не найдены');
+            // 1) Загружаем движок (если ещё не загружен)
+            if (!readBarcodesFn) {
+                setStatus('⏳ Загрузка движка...');
+                readBarcodesFn = await loadZXing();
+                zxingReady = true;
             }
 
-            if (currentCameraIndex === -1) {
-                currentCameraIndex = pickBackCameraIndex(availableCameras);
-            }
+            // 2) Получаем камеры
+            await refreshCameras();
+            if (!cameras.length) throw new Error('Камер не найдено');
 
-            const stream = await openCameraStream(currentCameraIndex);
-            currentStream = stream;
-            videoElement.srcObject = stream;
-            await videoElement.play();
+            if (currentCamIdx === -1) currentCamIdx = pickBackIndex();
+            const newStream = await openCamera(currentCamIdx);
+            stream = newStream;
+            video.srcObject = stream;
+            await video.play();
 
             isScanning = true;
             stopBtn.disabled = false;
             scanFrame.style.display = 'block';
-            switchCameraBtn.style.display = availableCameras.length > 1 ? 'inline-block' : 'none';
-            setStatus('🔍 Наведите камеру на Data Matrix');
+            switchBtn.style.display = cameras.length > 1 ? 'inline-block' : 'none';
+            setStatus('🔍 Наведите на Data Matrix');
 
             lastDecodeTime = 0;
             decodeLoop();
 
-        } catch (error) {
-            console.error('Ошибка запуска сканера:', error);
-            setStatus('❌ Ошибка: ' + error.message, true);
+        } catch (err) {
+            console.error('Ошибка запуска:', err);
+            setStatus('❌ ' + err.message, true);
             isScanning = false;
             startBtn.disabled = false;
             stopBtn.disabled = true;
         }
     }
 
-    // --- 5. Остановка ---
+    // --- Остановка ---
     function stopScanning() {
         isScanning = false;
-
-        if (decodeLoopId) {
-            cancelAnimationFrame(decodeLoopId);
-            decodeLoopId = null;
-        }
-
-        if (currentStream) {
-            currentStream.getTracks().forEach(track => track.stop());
-            currentStream = null;
-        }
-        videoElement.srcObject = null;
-
+        if (decodeLoopId) { cancelAnimationFrame(decodeLoopId); decodeLoopId = null; }
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        video.srcObject = null;
         scanFrame.style.display = 'none';
         startBtn.disabled = false;
         stopBtn.disabled = true;
-
-        if (scanStatus.textContent !== '✅ Код найден!') {
-            setStatus('⏹ Остановлен');
-        }
+        if (scanStatus.textContent !== '✅ Код найден!') setStatus('⏹ Остановлен');
     }
 
-    // --- 6. Переключение камеры ---
+    // --- Переключение камеры ---
     async function switchCamera() {
-        if (!availableCameras.length) {
-            await refreshCameraList();
-        }
-        if (availableCameras.length < 2) return;
-
         const wasScanning = isScanning;
         if (wasScanning) stopScanning();
-
-        currentCameraIndex = (currentCameraIndex + 1) % availableCameras.length;
-
-        // Небольшая пауза, чтобы предыдущий поток точно освободил устройство
-        await new Promise(resolve => setTimeout(resolve, 300));
+        if (!cameras.length) await refreshCameras();
+        if (cameras.length < 2) return;
+        currentCamIdx = (currentCamIdx + 1) % cameras.length;
+        await new Promise(r => setTimeout(r, 300));
         await startScanning();
     }
 
-    // --- 7. Отправка данных в Telegram ---
+    // --- Отправка ---
     function sendDataToTelegram(data) {
         if (!data) return;
         if (tg) {
             try {
                 tg.sendData(data);
-                console.log('Данные отправлены в Telegram:', data);
                 if (tg.showPopup) {
-                    tg.showPopup({
-                        title: '✅ Отправлено',
-                        message: `Данные "${data}" успешно отправлены боту.`,
-                        buttons: [{ type: 'ok' }]
-                    });
-                } else {
-                    alert('Данные отправлены боту!');
-                }
-            } catch (error) {
-                console.error('Ошибка отправки данных:', error);
-                alert('Ошибка отправки данных: ' + error.message);
-            }
+                    tg.showPopup({ title: '✅ Отправлено', message: `"${data}" отправлено.`, buttons: [{ type: 'ok' }] });
+                } else alert('Отправлено!');
+            } catch (e) { alert('Ошибка: ' + e.message); }
         } else {
-            alert('Telegram WebApp не инициализирован. Данные: ' + data);
+            alert('Данные: ' + data);
         }
     }
 
-    // --- Назначение обработчиков ---
+    // --- Обработчики ---
     startBtn.addEventListener('click', startScanning);
     stopBtn.addEventListener('click', stopScanning);
-    if (switchCameraBtn) {
-        switchCameraBtn.addEventListener('click', switchCamera);
-    }
-    sendDataBtn.addEventListener('click', () => {
-        const currentResult = resultText.textContent;
-        if (currentResult && currentResult !== 'Отсканированный код появится здесь') {
-            sendDataToTelegram(currentResult);
-        } else {
-            alert('Сначала отсканируйте код!');
-        }
+    switchBtn.addEventListener('click', switchCamera);
+    sendBtn.addEventListener('click', () => {
+        const res = resultText.textContent;
+        if (res && res !== 'Отсканированный код появится здесь') sendDataToTelegram(res);
+        else alert('Сначала отсканируйте');
     });
-
-    window.addEventListener('beforeunload', () => {
-        if (isScanning) stopScanning();
-    });
-
-    if (tg) {
-        tg.onEvent('viewportChanged', () => {
-            if (tg.isExpanded === false && isScanning) {
-                stopScanning();
-            }
-        });
-    }
-
-    // Обновляем список камер, если пользователь физически подключил/отключил устройство
-    navigator.mediaDevices.addEventListener?.('devicechange', () => {
-        availableCameras = [];
-        currentCameraIndex = -1;
-    });
+    window.addEventListener('beforeunload', () => { if (isScanning) stopScanning(); });
+    if (tg) tg.onEvent('viewportChanged', () => { if (tg.isExpanded === false && isScanning) stopScanning(); });
 
     // --- Инициализация ---
-    console.log('DataMatrix Scanner (zxing-wasm) готов. Нажмите "Запустить"');
-    setStatus('📷 Готов к работе');
+    setStatus('📷 Готов');
+    console.log('Scanner initialized. Нажмите Запустить.');
 });
