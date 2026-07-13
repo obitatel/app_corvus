@@ -1,6 +1,5 @@
 // --- Инициализация Telegram Web App ---
 const tg = window.Telegram?.WebApp;
-
 if (tg) {
     tg.ready();
     tg.expand();
@@ -8,87 +7,132 @@ if (tg) {
     console.warn('Telegram Web App SDK не загружен. Работа в обычном браузере.');
 }
 
-// --- Ожидаем полной загрузки DOM, чтобы гарантировать наличие элементов ---
 document.addEventListener('DOMContentLoaded', function() {
 
-    // --- Получение элементов DOM (с проверкой) ---
+    // --- Элементы DOM ---
     const videoElement = document.getElementById('video');
     const startBtn = document.getElementById('start-btn');
     const stopBtn = document.getElementById('stop-btn');
     const sendDataBtn = document.getElementById('send-data-btn');
     const resultText = document.getElementById('result-text');
     const scanStatus = document.getElementById('scan-status');
+    const switchCameraBtn = document.getElementById('switch-camera-btn'); // добавим кнопку переключения
 
-    // Проверяем, что все элементы найдены
     if (!videoElement || !startBtn || !stopBtn || !sendDataBtn || !resultText || !scanStatus) {
-        console.error('Один или несколько элементов DOM не найдены! Проверьте id в index.html.');
+        console.error('Один или несколько элементов DOM не найдены!');
         return;
     }
 
     // --- Состояние ---
     let isScanning = false;
     let codeReader = null;
-    let selectedDeviceId = null;
+    let currentFacingMode = 'environment'; // 'environment' – тыловая, 'user' – фронтальная
+    let isSwitchAvailable = false; // будет true, если доступно несколько камер
 
-    // --- Функция обновления статуса ---
+    // --- Функции обновления UI ---
     function setStatus(text, isError = false) {
         scanStatus.textContent = text;
         scanStatus.style.background = isError ? 'rgba(220, 53, 69, 0.9)' : 'rgba(0,0,0,0.7)';
     }
 
-    // --- Функция обновления результата ---
     function setResult(text) {
         resultText.textContent = text || 'Отсканированный код появится здесь';
         sendDataBtn.style.display = text ? 'inline-block' : 'none';
     }
 
-    // --- 1. Получение камеры ---
-    async function getCamera() {
+    // --- 1. Получение списка камер с группировкой по типу ---
+    async function getCamerasInfo() {
         try {
-            // Временно создаём ридер только для получения списка устройств
             const tempReader = new ZXing.BrowserMultiFormatReader();
-            const videoInputDevices = await tempReader.listVideoInputDevices();
+            const devices = await tempReader.listVideoInputDevices();
+            // devices – массив { deviceId, label, kind }
+            // Группируем по ключевым словам в label
+            const backCameras = [];
+            const frontCameras = [];
+            const others = [];
 
-            if (videoInputDevices.length === 0) {
-                throw new Error('Камеры не найдены');
+            devices.forEach(dev => {
+                const label = dev.label.toLowerCase();
+                if (label.includes('back') || label.includes('rear') || label.includes('environment')) {
+                    backCameras.push(dev);
+                } else if (label.includes('front') || label.includes('user') || label.includes('face')) {
+                    frontCameras.push(dev);
+                } else {
+                    others.push(dev);
+                }
+            });
+
+            // Если есть тыловая – используем первую, иначе берём первую из всех
+            let preferredDevice = null;
+            if (backCameras.length > 0) {
+                preferredDevice = backCameras[0];
+                isSwitchAvailable = (frontCameras.length > 0 || others.length > 0);
+            } else if (frontCameras.length > 0) {
+                preferredDevice = frontCameras[0];
+                isSwitchAvailable = (backCameras.length > 0 || others.length > 0);
+            } else if (others.length > 0) {
+                preferredDevice = others[0];
+                isSwitchAvailable = false;
             }
 
-            selectedDeviceId = videoInputDevices[0].deviceId;
-            console.log('Выбрана камера:', videoInputDevices[0].label || 'Камера');
-            return true;
+            // Для переключения сохраняем все устройства
+            window.__allVideoDevices = devices; // сохраним глобально для переключения
+
+            return {
+                deviceId: preferredDevice?.deviceId || null,
+                devices: devices,
+                backCameras: backCameras,
+                frontCameras: frontCameras,
+                others: others
+            };
         } catch (error) {
-            console.error('Ошибка получения камер:', error);
-            setStatus('❌ Ошибка доступа к камере: ' + error.message, true);
-            return false;
+            console.error('Ошибка получения списка камер:', error);
+            return null;
         }
     }
 
-    // --- 2. Запуск сканирования ---
+    // --- 2. Запуск сканирования с указанием камеры (по deviceId или facingMode) ---
     async function startScanning() {
         if (isScanning) return;
-
-        if (!selectedDeviceId) {
-            const success = await getCamera();
-            if (!success) return;
-        }
 
         try {
             setStatus('⏳ Запуск сканера...');
 
-            // Используем специализированный ридер для Data Matrix
-            codeReader = new ZXing.BrowserDatamatrixCodeReader();
-            // Альтернатива для всех форматов (работает медленнее):
-            // codeReader = new ZXing.BrowserMultiFormatReader();
+            // Получаем информацию о камерах
+            const cameraInfo = await getCamerasInfo();
+            if (!cameraInfo || !cameraInfo.deviceId) {
+                throw new Error('Не найдена подходящая камера');
+            }
 
-            codeReader.decodeFromVideoDevice(selectedDeviceId, videoElement, (result, error) => {
+            // Сохраняем список для переключения
+            window.__cameraInfo = cameraInfo;
+
+            // Создаём ридер – используем BrowserMultiFormatReader (поддерживает Data Matrix)
+            codeReader = new ZXing.BrowserMultiFormatReader();
+            // Можно также явно указать форматы для ускорения:
+            // codeReader = new ZXing.BrowserMultiFormatReader(0, [ZXing.BarcodeFormat.DATA_MATRIX, ZXing.BarcodeFormat.QR_CODE]);
+
+            // Настройка видеопотока: просим высокое разрешение и фокусировку
+            const constraints = {
+                video: {
+                    deviceId: { exact: cameraInfo.deviceId },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    facingMode: currentFacingMode, // environment/user
+                    focusMode: 'continuous',
+                    zoom: 1.0
+                }
+            };
+
+            // Запускаем декодирование
+            codeReader.decodeFromVideoConstraints(constraints, videoElement, (result, error) => {
                 if (result) {
                     const text = result.getText();
-                    console.log('DataMatrix отсканирован:', text);
+                    console.log('DataMatrix/QR отсканирован:', text);
                     setResult(text);
                     setStatus('✅ Код найден!');
-                    stopScanning(); // Останавливаем после первого успешного сканирования
+                    stopScanning(); // останавливаем после первого успеха
                 }
-
                 if (error && !(error instanceof ZXing.NotFoundException)) {
                     console.warn('Ошибка сканирования:', error);
                 }
@@ -97,8 +141,11 @@ document.addEventListener('DOMContentLoaded', function() {
             isScanning = true;
             startBtn.disabled = true;
             stopBtn.disabled = false;
+            // Показываем кнопку переключения, если есть альтернативные камеры
+            if (switchCameraBtn) {
+                switchCameraBtn.style.display = (cameraInfo.backCameras.length > 0 && cameraInfo.frontCameras.length > 0) ? 'inline-block' : 'none';
+            }
             setStatus('🔍 Сканирование... Наведите камеру на Data Matrix');
-            setResult('');
 
         } catch (error) {
             console.error('Ошибка запуска сканера:', error);
@@ -109,7 +156,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // --- 3. Остановка сканирования ---
+    // --- 3. Остановка ---
     function stopScanning() {
         if (codeReader) {
             try {
@@ -124,23 +171,34 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             codeReader = null;
         }
-
         isScanning = false;
         startBtn.disabled = false;
         stopBtn.disabled = true;
-
         if (scanStatus.textContent !== '✅ Код найден!') {
             setStatus('⏹ Остановлен');
         }
     }
 
-    // --- 4. Отправка данных в Telegram ---
-    function sendDataToTelegram(data) {
-        if (!data) {
-            alert('Нет данных для отправки');
+    // --- 4. Переключение камеры ---
+    async function switchCamera() {
+        if (!isScanning) {
+            // Если сканирование не активно, просто меняем режим и запускаем
+            currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
+            await startScanning();
             return;
         }
 
+        // Если сканирование активно – останавливаем, меняем режим и перезапускаем
+        stopScanning();
+        // Даём время на освобождение ресурсов
+        await new Promise(resolve => setTimeout(resolve, 300));
+        currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
+        await startScanning();
+    }
+
+    // --- 5. Отправка данных в Telegram ---
+    function sendDataToTelegram(data) {
+        if (!data) return;
         if (tg) {
             try {
                 tg.sendData(data);
@@ -159,14 +217,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert('Ошибка отправки данных: ' + error.message);
             }
         } else {
-            alert('Telegram WebApp не инициализирован. Данные (для демонстрации): ' + data);
-            console.log('Данные для отправки (Telegram недоступен):', data);
+            alert('Telegram WebApp не инициализирован. Данные: ' + data);
         }
     }
 
-    // --- Назначение обработчиков событий ---
+    // --- Назначение обработчиков ---
     startBtn.addEventListener('click', startScanning);
     stopBtn.addEventListener('click', stopScanning);
+    if (switchCameraBtn) {
+        switchCameraBtn.addEventListener('click', switchCamera);
+    }
     sendDataBtn.addEventListener('click', () => {
         const currentResult = resultText.textContent;
         if (currentResult && currentResult !== 'Отсканированный код появится здесь') {
@@ -176,25 +236,19 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // --- Остановка сканирования при закрытии страницы ---
     window.addEventListener('beforeunload', () => {
         if (isScanning) stopScanning();
     });
 
-    // --- Если Telegram приложение сворачивается, останавливаем сканирование ---
     if (tg) {
         tg.onEvent('viewportChanged', () => {
             if (tg.isExpanded === false && isScanning) {
-                console.log('Приложение свернуто, останавливаем сканирование');
                 stopScanning();
             }
         });
     }
 
     // --- Инициализация ---
-    console.log('DataMatrix Scanner инициализирован. Нажмите "Запустить" для начала.');
+    console.log('DataMatrix Scanner готов. Нажмите "Запустить"');
     setStatus('📷 Готов к работе');
-
-    // (Опционально) Предварительно запрашиваем доступ к камере
-    // getCamera();
 });
