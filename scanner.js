@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         };
         reader.readAsDataURL(file);
-        fileInput.value = ''; // сброс
+        fileInput.value = '';
     });
 
     // --- Сканирование выделенной области ---
@@ -48,7 +48,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const croppedCanvas = cropper.getCroppedCanvas({ width: 2000, height: 2000 });
         const blob = await new Promise(resolve => croppedCanvas.toBlob(resolve, 'image/png', 1.0));
 
-        const html5QrCode = new Html5Qrcode(/* пустой div */);
+        // Создаём временный div для html5-qrcode
+        const tempDiv = document.createElement('div');
+        tempDiv.id = 'temp-scan-div';
+        tempDiv.style.display = 'none';
+        document.body.appendChild(tempDiv);
+
+        const html5QrCode = new Html5Qrcode('temp-scan-div');
         try {
             const result = await html5QrCode.scanFile(blob, false);
             resultP.innerText = '✅ Считано: ' + result;
@@ -58,6 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             cropScanBtn.disabled = false;
             html5QrCode.clear();
+            document.body.removeChild(tempDiv);
         }
     });
 
