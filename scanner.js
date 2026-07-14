@@ -1,18 +1,24 @@
-// Ловим необработанные ошибки
+// Ловим глобальные ошибки
 window.addEventListener('error', e => console.error('Глобальная ошибка:', e.error || e.message));
 window.addEventListener('unhandledrejection', e => console.error('Необработанный rejection:', e.reason));
 
 // --- Инициализация Telegram ---
 const tg = window.Telegram?.WebApp;
-if (tg) { tg.ready(); tg.expand(); }
-else console.warn('Telegram Web App SDK не загружен');
+if (tg) {
+    tg.ready();
+    tg.expand();
+    console.log('Telegram WebApp инициализирован');
+} else {
+    console.warn('Telegram Web App SDK не загружен');
+}
 
 // --- Конфигурация ---
-const API_URL = 'https://ваш-сервер.com/api/scan'; // замените на реальный адрес
+// (для отправки на бэкенд не используется, т.к. отправляем через sendData)
+// оставляем только для возможных будущих доработок
 
 document.addEventListener('DOMContentLoaded', function() {
 
-    // --- Элементы ---
+    // --- Элементы DOM ---
     const video = document.getElementById('video');
     const videoContainer = document.getElementById('video-container');
     const canvas = document.getElementById('capture-canvas');
@@ -40,18 +46,17 @@ document.addEventListener('DOMContentLoaded', function() {
     let decodingInProgress = false;
     let lastDecodeErrorLog = 0;
 
-    // --- Новые переменные для хранения найденных кодов ---
-    let foundCodes = [];           // массив { text, format }
+    // Массив найденных кодов
+    let foundCodes = [];
     let foundQR = false;
     let foundDM = false;
 
-    // --- UI ---
+    // --- UI функции ---
     function setStatus(text, error = false) {
         scanStatus.textContent = text;
         scanStatus.style.background = error ? 'rgba(220,53,69,0.9)' : 'rgba(0,0,0,0.7)';
     }
 
-    // Обновлённая функция отображения результатов (поддерживает несколько кодов)
     function setResult(codes) {
         if (!codes || codes.length === 0) {
             resultText.textContent = 'Отсканированный код появится здесь';
@@ -63,7 +68,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // --- Загрузка движка (без изменений) ---
+    // --- Загрузка движка zxing-wasm ---
     async function loadZXing() {
         const urls = [
             'https://esm.sh/zxing-wasm@2/reader',
@@ -81,10 +86,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.warn('❌ не удалось загрузить:', url, e);
             }
         }
-        throw new Error('Не удалось загрузить zxing-wasm ни с одного CDN');
+        throw new Error('Не удалось загрузить zxing-wasm');
     }
 
-    // --- Камера (без изменений) ---
+    // --- Камера ---
     async function refreshCameras() {
         try {
             const warm = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -103,7 +108,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return cameras.length ? cameras[cameras.length - 1].deviceId : null;
     }
 
-    // --- Фокус (без изменений) ---
+    // --- Фокус ---
     async function applyFocus(track) {
         if (!track) return false;
         try {
@@ -130,7 +135,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // --- Декодирование (ГЛАВНЫЕ ИЗМЕНЕНИЯ) ---
+    // --- Декодирование (основной цикл) ---
     function decodeLoop() {
         if (!isScanning) return;
         decodeLoopId = requestAnimationFrame(decodeLoop);
@@ -157,40 +162,37 @@ document.addEventListener('DOMContentLoaded', function() {
 
         decodingInProgress = true;
         readBarcodesFn(imageData, {
-            formats: ['DataMatrix', 'QRCode'],   // ищем оба формата
+            formats: ['DataMatrix', 'QRCode'],
             tryHarder: true,
             tryRotate: true,
             tryInvert: true,
             tryDenoise: true,
             binarizer: 'LocalAverage',
-            maxNumberOfSymbols: 2,   // разрешаем найти до 2 символов за раз (но может вернуть и один)
+            maxNumberOfSymbols: 2,
         }).then(results => {
             if (!isScanning) return;
             if (results && results.length > 0) {
                 let newCodeFound = false;
                 for (const result of results) {
                     const text = result.text;
-                    const format = result.format; // 'QRCode' или 'DataMatrix'
-                    // Проверяем, не добавлен ли уже такой код
+                    const format = result.format;
                     const alreadyExists = foundCodes.some(c => c.text === text && c.format === format);
                     if (!alreadyExists) {
                         foundCodes.push({ text, format });
                         if (format === 'QRCode') foundQR = true;
                         else if (format === 'DataMatrix') foundDM = true;
                         newCodeFound = true;
+                        console.log(`Найден новый код: ${format} -> ${text}`);
                     }
                 }
                 if (newCodeFound) {
                     setResult(foundCodes);
                     setStatus(`Найдено: ${foundCodes.length} код(а)`);
-                    // Если нашли оба типа — автоматически останавливаем
                     if (foundQR && foundDM) {
                         setStatus('✅ Найдены оба кода!');
                         stopScanning();
                         startBtn.disabled = false;
                         stopBtn.disabled = true;
-                        // После stopScanning цикл прервётся, поэтому return не обязателен
-                        // но выходим, чтобы не продолжать
                         return;
                     }
                 }
@@ -206,7 +208,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // --- Tap-to-focus (без изменений) ---
+    // --- Tap-to-focus ---
     videoContainer.addEventListener('click', async (e) => {
         if (!isScanning || !videoTrack) return;
         if (!focusSupported) {
@@ -226,7 +228,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     await videoTrack.applyConstraints({
                         advanced: [{ focusMode: 'continuous' }]
                     });
-                    setStatus('🔍 Наведите на Data Matrix');
+                    setStatus('🔍 Наведите на Data Matrix / QR');
                 } catch {}
             }, 1500);
         } catch (e) {
@@ -235,11 +237,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // --- Запуск (сброс найденных кодов) ---
+    // --- Запуск сканирования ---
     async function startScanning() {
         if (isScanning) return;
         try {
-            // Сбрасываем найденные коды при новом запуске
+            // Сбрасываем найденные коды
             foundCodes = [];
             foundQR = false;
             foundDM = false;
@@ -304,7 +306,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // --- Остановка (не сбрасываем foundCodes) ---
+    // --- Остановка сканирования ---
     function stopScanning() {
         isScanning = false;
         if (decodeLoopId) { cancelAnimationFrame(decodeLoopId); decodeLoopId = null; }
@@ -318,7 +320,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // --- Переключение камеры (без изменений) ---
+    // --- Переключение камеры ---
     async function switchCamera() {
         const wasScanning = isScanning;
         if (wasScanning) stopScanning();
@@ -334,44 +336,89 @@ document.addEventListener('DOMContentLoaded', function() {
         await startScanning();
     }
 
-    // --- Отправка данных на сервер (принимает массив кодов) ---
-    async function sendScannedData(codes) {
-        if (!codes || codes.length === 0) return;
-        const initData = tg?.initData || '';
+    // =============================================
+    // ОТПРАВКА ДАННЫХ ЧЕРЕЗ Telegram.WebApp.sendData
+    // =============================================
+    function sendDataToBot() {
+        console.log('=== ОТПРАВКА ДАННЫХ ===');
+        console.log('foundCodes:', foundCodes);
+
+        if (!foundCodes || foundCodes.length === 0) {
+            console.warn('Нет данных для отправки');
+            if (tg?.showPopup) {
+                tg.showPopup({
+                    title: 'Нет данных',
+                    message: 'Сначала отсканируйте код',
+                    buttons: [{ type: 'ok' }]
+                });
+            } else {
+                alert('Сначала отсканируйте');
+            }
+            return;
+        }
+
+        // Формируем JSON
+        const payload = { codes: foundCodes };
+        const dataStr = JSON.stringify(payload);
+        console.log('JSON для отправки:', dataStr);
+        console.log('Размер данных (байт):', dataStr.length);
+
+        if (dataStr.length > 4096) {
+            console.error('❌ Данные превышают лимит 4096 байт!');
+            if (tg?.showPopup) {
+                tg.showPopup({
+                    title: 'Ошибка',
+                    message: 'Данные слишком большие для отправки',
+                    buttons: [{ type: 'ok' }]
+                });
+            } else {
+                alert('Данные слишком большие');
+            }
+            return;
+        }
+
+        // Проверяем наличие Telegram WebApp
+        const webApp = window.Telegram?.WebApp;
+        console.log('window.Telegram.WebApp:', webApp);
+
+        if (!webApp) {
+            console.error('❌ Telegram WebApp не найден');
+            alert('Имитация отправки (WebApp отсутствует):\n' + dataStr);
+            return;
+        }
+
+        if (typeof webApp.sendData !== 'function') {
+            console.error('❌ sendData не является функцией');
+            alert('sendData недоступен');
+            return;
+        }
+
+        // Отправляем
         try {
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    codes: codes,          // массив { text, format }
-                    initData: initData
-                }),
-            });
-            const result = await response.json();
-            if (!response.ok) {
-                throw new Error(result.message || 'Ошибка сервера');
-            }
+            console.log('Вызываю webApp.sendData()...');
+            webApp.sendData(dataStr);
+            console.log('✅ sendData вызван успешно');
+
+            // Если приложение не закрылось автоматически, закроем принудительно через 1 секунду
+            setTimeout(() => {
+                console.log('Принудительное закрытие через tg.close()');
+                if (webApp.close) {
+                    webApp.close();
+                } else {
+                    console.warn('close() не доступен');
+                }
+            }, 1000);
+
+        } catch (err) {
+            console.error('❌ Ошибка при вызове sendData:', err);
             if (tg?.showPopup) {
                 tg.showPopup({
-                    title: '✅ Успешно',
-                    message: result.message || 'Данные отправлены',
+                    title: 'Ошибка',
+                    message: 'Не удалось отправить данные',
                     buttons: [{ type: 'ok' }]
                 });
             } else {
-                alert('✅ ' + (result.message || 'Отправлено успешно'));
-            }
-            // Можно очистить foundCodes после отправки, если нужно
-            // foundCodes = []; setResult([]);
-        } catch (error) {
-            console.error('Ошибка отправки:', error);
-            if (tg?.showPopup) {
-                tg.showPopup({
-                    title: '❌ Ошибка',
-                    message: error.message || 'Не удалось отправить данные',
-                    buttons: [{ type: 'ok' }]
-                });
-            } else {
-                alert('❌ Ошибка: ' + error.message);
+                alert('Ошибка отправки: ' + err.message);
             }
         }
     }
@@ -380,34 +427,23 @@ document.addEventListener('DOMContentLoaded', function() {
     startBtn.addEventListener('click', startScanning);
     stopBtn.addEventListener('click', stopScanning);
     switchBtn.addEventListener('click', switchCamera);
-    sendBtn.addEventListener('click', () => {
-    if (foundCodes.length === 0) {
-        if (tg?.showPopup) {
-            tg.showPopup({
-                title: 'Нет данных',
-                message: 'Сначала отсканируйте код',
-                buttons: [{ type: 'ok' }]
-            });
-        } else {
-            alert('Сначала отсканируйте');
-        }
-        return;
-    }
-    // Формируем JSON с массивом кодов
-    const dataToSend = JSON.stringify({
-        codes: foundCodes   // массив объектов { text, format }
-    });
-    // Отправляем и закрываем приложение
-    if (tg) {
-        tg.sendData(dataToSend);
-    } else {
-        // Для тестирования вне Telegram
-        alert('Данные (имитация): ' + dataToSend);
-    }
-});
 
-    window.addEventListener('beforeunload', () => { if (isScanning) stopScanning(); });
-    if (tg) tg.onEvent('viewportChanged', () => { if (tg.isExpanded === false && isScanning) stopScanning(); });
+    // Обработчик кнопки "Отправить"
+    sendBtn.addEventListener('click', sendDataToBot);
+
+    // При закрытии страницы останавливаем сканер
+    window.addEventListener('beforeunload', () => {
+        if (isScanning) stopScanning();
+    });
+
+    // Если Telegram свернул приложение – останавливаем сканер
+    if (tg) {
+        tg.onEvent('viewportChanged', () => {
+            if (tg.isExpanded === false && isScanning) {
+                stopScanning();
+            }
+        });
+    }
 
     // --- Инициализация ---
     setStatus('📷 Готов');
