@@ -381,20 +381,30 @@ document.addEventListener('DOMContentLoaded', function() {
     stopBtn.addEventListener('click', stopScanning);
     switchBtn.addEventListener('click', switchCamera);
     sendBtn.addEventListener('click', () => {
-        if (foundCodes.length === 0) {
-            if (tg?.showPopup) {
-                tg.showPopup({
-                    title: 'Нет данных',
-                    message: 'Сначала отсканируйте код',
-                    buttons: [{ type: 'ok' }]
-                });
-            } else {
-                alert('Сначала отсканируйте');
-            }
-            return;
+    if (foundCodes.length === 0) {
+        if (tg?.showPopup) {
+            tg.showPopup({
+                title: 'Нет данных',
+                message: 'Сначала отсканируйте код',
+                buttons: [{ type: 'ok' }]
+            });
+        } else {
+            alert('Сначала отсканируйте');
         }
-        sendScannedData(foundCodes);
+        return;
+    }
+    // Формируем JSON с массивом кодов
+    const dataToSend = JSON.stringify({
+        codes: foundCodes   // массив объектов { text, format }
     });
+    // Отправляем и закрываем приложение
+    if (tg) {
+        tg.sendData(dataToSend);
+    } else {
+        // Для тестирования вне Telegram
+        alert('Данные (имитация): ' + dataToSend);
+    }
+});
 
     window.addEventListener('beforeunload', () => { if (isScanning) stopScanning(); });
     if (tg) tg.onEvent('viewportChanged', () => { if (tg.isExpanded === false && isScanning) stopScanning(); });
