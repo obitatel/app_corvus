@@ -154,7 +154,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         decodingInProgress = true;
         readBarcodesFn(imageData, {
-            formats: ['DataMatrix'],
+            formats: ['DataMatrix','QRCode'],
             tryHarder: true,
             tryRotate: true,
             tryInvert: true,
