@@ -247,7 +247,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // остаётся размытой/на фиксированном фокусе, и Data Matrix просто не читается.
             let tempStream = await navigator.mediaDevices.getUserMedia(constraints);
             tempStream.getTracks().forEach(t => t.stop());
-            await new Promise(r => setTimeout(r, 150));
+            await new Promise(r => setTimeout(r, 1500));
 
             stream = await navigator.mediaDevices.getUserMedia(constraints);
             videoTrack = stream.getVideoTracks()[0];
