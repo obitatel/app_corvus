@@ -12,10 +12,6 @@ if (tg) {
     console.warn('Telegram Web App SDK не загружен');
 }
 
-// --- Конфигурация ---
-// (для отправки на бэкенд не используется, т.к. отправляем через sendData)
-// оставляем только для возможных будущих доработок
-
 document.addEventListener('DOMContentLoaded', function() {
 
     // --- Элементы DOM ---
@@ -57,15 +53,23 @@ document.addEventListener('DOMContentLoaded', function() {
         scanStatus.style.background = error ? 'rgba(220,53,69,0.9)' : 'rgba(0,0,0,0.7)';
     }
 
+    function updateSendButton() {
+        // Показываем кнопку только если найдены оба кода
+        const bothFound = foundQR && foundDM;
+        sendBtn.style.display = bothFound ? 'inline-block' : 'none';
+        if (bothFound) {
+            sendBtn.textContent = '📤 Отправить оба кода';
+        }
+    }
+
     function setResult(codes) {
         if (!codes || codes.length === 0) {
             resultText.textContent = 'Отсканированный код появится здесь';
-            sendBtn.style.display = 'none';
         } else {
             const lines = codes.map(c => `${c.format}: ${c.text}`).join('\n');
             resultText.textContent = lines;
-            sendBtn.style.display = 'inline-block';
         }
+        updateSendButton();
     }
 
     // --- Загрузка движка zxing-wasm ---
@@ -337,22 +341,25 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // =============================================
-    // ОТПРАВКА ДАННЫХ ЧЕРЕЗ Telegram.WebApp.sendData
+    // ОТПРАВКА ДАННЫХ (только при наличии обоих кодов)
     // =============================================
     function sendDataToBot() {
         console.log('=== ОТПРАВКА ДАННЫХ ===');
         console.log('foundCodes:', foundCodes);
+        console.log('foundQR:', foundQR, 'foundDM:', foundDM);
 
-        if (!foundCodes || foundCodes.length === 0) {
-            console.warn('Нет данных для отправки');
+        // Проверяем наличие обоих кодов
+        if (!foundQR || !foundDM) {
+            const msg = 'Не найдены оба кода (QR и DataMatrix).';
+            console.warn(msg);
             if (tg?.showPopup) {
                 tg.showPopup({
-                    title: 'Нет данных',
-                    message: 'Сначала отсканируйте код',
+                    title: 'Неполные данные',
+                    message: 'Отсканируйте оба кода (QR и DataMatrix) перед отправкой.',
                     buttons: [{ type: 'ok' }]
                 });
             } else {
-                alert('Сначала отсканируйте');
+                alert(msg);
             }
             return;
         }
@@ -377,7 +384,6 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        // Проверяем наличие Telegram WebApp
         const webApp = window.Telegram?.WebApp;
         console.log('window.Telegram.WebApp:', webApp);
 
@@ -393,13 +399,11 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        // Отправляем
         try {
             console.log('Вызываю webApp.sendData()...');
             webApp.sendData(dataStr);
             console.log('✅ sendData вызван успешно');
 
-            // Если приложение не закрылось автоматически, закроем принудительно через 1 секунду
             setTimeout(() => {
                 console.log('Принудительное закрытие через tg.close()');
                 if (webApp.close) {
@@ -427,16 +431,12 @@ document.addEventListener('DOMContentLoaded', function() {
     startBtn.addEventListener('click', startScanning);
     stopBtn.addEventListener('click', stopScanning);
     switchBtn.addEventListener('click', switchCamera);
-
-    // Обработчик кнопки "Отправить"
     sendBtn.addEventListener('click', sendDataToBot);
 
-    // При закрытии страницы останавливаем сканер
     window.addEventListener('beforeunload', () => {
         if (isScanning) stopScanning();
     });
 
-    // Если Telegram свернул приложение – останавливаем сканер
     if (tg) {
         tg.onEvent('viewportChanged', () => {
             if (tg.isExpanded === false && isScanning) {
