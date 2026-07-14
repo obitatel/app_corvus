@@ -1,6 +1,6 @@
 // --- Инициализация Telegram ---
 const tg = window.Telegram?.WebApp;
-if (tg) { tg.ready(); tg.expand(); }
+if (tg) { tg.ready(); tg.expand(); } 
 else console.warn('Telegram Web App SDK не загружен');
 
 document.addEventListener('DOMContentLoaded', function() {
