@@ -32,7 +32,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const DECODE_INTERVAL = 100;
     const ROI_RATIO = 0.45;
     let cameras = [];
-    let currentCamIdx = -1;
+    let currentDeviceId = null; // переключаемся по deviceId, а не по индексу —
+    // порядок в enumerateDevices() не гарантированно стабилен между вызовами
     let readBarcodesFn = null;
     let focusSupported = false;
     let decodingInProgress = false;
@@ -84,12 +85,12 @@ document.addEventListener('DOMContentLoaded', function() {
         return cameras;
     }
 
-    function pickBackIndex() {
+    function pickBackDeviceId() {
         let idx = cameras.findIndex(d => /back|rear|environment/i.test(d.label));
-        if (idx !== -1) return idx;
-        const nonFront = cameras.map((d, i) => ({ d, i })).filter(({ d }) => !/front|user|face/i.test(d.label));
-        if (nonFront.length) return nonFront[nonFront.length - 1].i;
-        return cameras.length > 1 ? cameras.length - 1 : 0;
+        if (idx !== -1) return cameras[idx].deviceId;
+        const nonFront = cameras.filter(d => !/front|user|face/i.test(d.label));
+        if (nonFront.length) return nonFront[nonFront.length - 1].deviceId;
+        return cameras.length ? cameras[cameras.length - 1].deviceId : null;
     }
 
     // --- Функция применения фокуса (без перезапуска внутри) ---
@@ -226,8 +227,12 @@ document.addEventListener('DOMContentLoaded', function() {
             await refreshCameras();
             if (!cameras.length) throw new Error('Камер не найдено');
 
-            if (currentCamIdx === -1) currentCamIdx = pickBackIndex();
-            const cam = cameras[currentCamIdx];
+            if (!currentDeviceId || !cameras.some(c => c.deviceId === currentDeviceId)) {
+                // либо ещё не выбирали камеру, либо ранее выбранная пропала из списка
+                currentDeviceId = pickBackDeviceId();
+            }
+            const cam = cameras.find(c => c.deviceId === currentDeviceId);
+            if (!cam) throw new Error('Выбранная камера недоступна');
 
             // --- Открываем камеру ---
             const constraints = {
@@ -239,15 +244,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             };
 
-            // ВАЖНО: на части устройств (в основном Chrome/Android WebView, в т.ч. внутри
-            // Telegram) движок continuous-автофокуса не включается от одного applyConstraints
-            // на свежеоткрытом треке — он трогается в работу только при повторной инициализации
-            // потока камеры на уровне драйвера. Поэтому сразу открываем поток второй раз —
-            // это дороже по времени (~короткая пауза), но иначе на таких устройствах картинка
-            // остаётся размытой/на фиксированном фокусе, и Data Matrix просто не читается.
-            let tempStream = await navigator.mediaDevices.getUserMedia(constraints);
-            tempStream.getTracks().forEach(t => t.stop());
-            await new Promise(r => setTimeout(r, 5000));
+            // ВАЖНО (подтверждено вручную): на части устройств (Chrome/Android WebView,
+            // в т.ч. внутри Telegram) движок continuous-автофокуса просыпается только при
+            // переключении на ДРУГУЮ физическую камеру и обратно — просто закрыть и заново
+            // открыть тот же deviceId недостаточно, автофокус всё равно остаётся "залипшим".
+            // Поэтому перед основной камерой на мгновение открываем любую другую доступную
+            // камеру (обычно фронтальную) и сразу её закрываем — это тот же самый переход,
+            // который вручную делает кнопка «Камера», нажатая дважды.
+            const bounceCam = cameras.find(c => c.deviceId !== cam.deviceId);
+            if (bounceCam) {
+                try {
+                    const bounceStream = await navigator.mediaDevices.getUserMedia({
+                        video: { deviceId: { exact: bounceCam.deviceId } }
+                    });
+                    bounceStream.getTracks().forEach(t => t.stop());
+                    await new Promise(r => setTimeout(r, 200));
+                } catch (e) {
+                    console.warn('Не удалось выполнить bounce-переключение камеры:', e);
+                }
+            }
 
             stream = await navigator.mediaDevices.getUserMedia(constraints);
             videoTrack = stream.getVideoTracks()[0];
@@ -296,9 +311,14 @@ document.addEventListener('DOMContentLoaded', function() {
     async function switchCamera() {
         const wasScanning = isScanning;
         if (wasScanning) stopScanning();
-        if (!cameras.length) await refreshCameras();
+
+        await refreshCameras(); // всегда свежий список — порядок может отличаться от предыдущего вызова
         if (cameras.length < 2) return;
-        currentCamIdx = (currentCamIdx + 1) % cameras.length;
+
+        const curIdx = cameras.findIndex(c => c.deviceId === currentDeviceId);
+        const nextIdx = curIdx === -1 ? 0 : (curIdx + 1) % cameras.length;
+        currentDeviceId = cameras[nextIdx].deviceId;
+
         await new Promise(r => setTimeout(r, 300));
         await startScanning();
     }
