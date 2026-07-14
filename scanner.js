@@ -1,3 +1,8 @@
+// Ловим необработанные ошибки — если модуль/движок упадёт где-то на верхнем уровне,
+// это будет видно в консоли, а не выглядеть как "просто ничего не происходит"
+window.addEventListener('error', e => console.error('Глобальная ошибка:', e.error || e.message));
+window.addEventListener('unhandledrejection', e => console.error('Необработанный rejection:', e.reason));
+
 // --- Инициализация Telegram ---
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
@@ -29,7 +34,9 @@ document.addEventListener('DOMContentLoaded', function() {
     let cameras = [];
     let currentCamIdx = -1;
     let readBarcodesFn = null;
-    let focusSupported = false; // флаг поддержки focusMode
+    let focusSupported = false;
+    let decodingInProgress = false;
+    let lastDecodeErrorLog = 0;
 
     // --- UI ---
     function setStatus(text, error = false) {
@@ -85,8 +92,8 @@ document.addEventListener('DOMContentLoaded', function() {
         return cameras.length > 1 ? cameras.length - 1 : 0;
     }
 
-    // --- Функция для применения фокуса с перезапуском при необходимости ---
-    async function applyFocusWithRetry(track, maxRetries = 2) {
+    // --- Функция применения фокуса (без перезапуска внутри) ---
+    async function applyFocus(track) {
         if (!track) return false;
         try {
             const caps = track.getCapabilities ? track.getCapabilities() : {};
@@ -96,41 +103,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
                 focusSupported = true;
                 return true;
-            } else {
-                // Если focusMode не поддерживается – пробуем manual (некоторые камеры)
-                if (caps.focusMode && caps.focusMode.includes('manual')) {
-                    await track.applyConstraints({
-                        advanced: [{ focusMode: 'manual', focusDistance: 1.0 }]
-                    });
-                    focusSupported = true;
-                    return true;
-                }
-                focusSupported = false;
-                return false;
+            } else if (caps.focusMode && caps.focusMode.includes('manual')) {
+                await track.applyConstraints({
+                    advanced: [{ focusMode: 'manual', focusDistance: 1.0 }]
+                });
+                focusSupported = true;
+                return true;
             }
+            focusSupported = false;
+            return false;
         } catch (e) {
             console.warn('Ошибка применения фокуса:', e);
-            if (maxRetries > 0) {
-                // Пробуем перезапустить трек
-                const newStream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        deviceId: { exact: track.getSettings().deviceId },
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 },
-                        frameRate: { ideal: 30 }
-                    }
-                });
-                const newTrack = newStream.getVideoTracks()[0];
-                // Заменяем поток
-                const oldStream = stream;
-                stream = newStream;
-                videoTrack = newTrack;
-                video.srcObject = newStream;
-                await video.play();
-                oldStream.getTracks().forEach(t => t.stop());
-                // Повторяем попытку
-                return await applyFocusWithRetry(newTrack, maxRetries - 1);
-            }
+            focusSupported = false;
             return false;
         }
     }
@@ -148,6 +132,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const vw = video.videoWidth, vh = video.videoHeight;
         if (!vw || !vh) return;
 
+        // Пропускаем кадр, если предыдущий ещё декодируется — иначе на слабых
+        // устройствах промисы начинают копиться быстрее, чем WASM успевает их обработать
+        if (decodingInProgress) return;
+
         const cropW = vw * ROI_RATIO, cropH = vh * ROI_RATIO;
         const sx = (vw - cropW) / 2, sy = (vh - cropH) / 2;
 
@@ -155,24 +143,23 @@ document.addEventListener('DOMContentLoaded', function() {
         canvas.height = cropH;
         ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
 
+        // Кадр отдаём как есть, БЕЗ ручной бинаризации по фиксированному порогу.
+        // Внутри zxing-cpp уже стоит адаптивный локальный бинаризатор (LocalAverage),
+        // который сам подстраивается под неравномерное освещение/блики на кадре.
+        // Наш собственный threshold=128 до этого только портил полутона, на которых
+        // и основан адаптивный алгоритм — для мелких Data Matrix это особенно критично.
         const imageData = ctx.getImageData(0, 0, cropW, cropH);
-        const data = imageData.data;
-        for (let i = 0; i < data.length; i += 4) {
-            const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-            const val = gray > 128 ? 255 : 0;
-            data[i] = data[i+1] = data[i+2] = val;
-        }
-        ctx.putImageData(imageData, 0, 0);
-
-        const processedImageData = ctx.getImageData(0, 0, cropW, cropH);
         if (!readBarcodesFn) return;
 
-        readBarcodesFn(processedImageData, {
+        decodingInProgress = true;
+        readBarcodesFn(imageData, {
             formats: ['DataMatrix'],
             tryHarder: true,
             tryRotate: true,
+            tryInvert: true,
             tryDenoise: true,
-            maxSymbols: 1,
+            binarizer: 'LocalAverage',
+            maxNumberOfSymbols: 1, // правильное имя поля в актуальном API (не maxSymbols)
         }).then(results => {
             if (!isScanning) return;
             if (results && results.length > 0 && results[0].text) {
@@ -183,7 +170,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
             }
-        }).catch(err => {});
+        }).catch(err => {
+            // Не глушим ошибку молча — логируем не чаще раза в 3 сек, чтобы не спамить консоль
+            const now = performance.now();
+            if (now - lastDecodeErrorLog > 3000) {
+                console.warn('Ошибка декодирования:', err);
+                lastDecodeErrorLog = now;
+            }
+        }).finally(() => {
+            decodingInProgress = false;
+        });
     }
 
     // --- Tap-to-focus ---
@@ -215,7 +211,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // --- Запуск (с принудительным перезапуском) ---
+    // --- Запуск с автоматическим переключением камеры для активации фокуса ---
     async function startScanning() {
         if (isScanning) return;
         try {
@@ -233,39 +229,44 @@ document.addEventListener('DOMContentLoaded', function() {
             if (currentCamIdx === -1) currentCamIdx = pickBackIndex();
             const cam = cameras[currentCamIdx];
 
-            // Первый запуск
-            let constraints = {
+            // --- Открываем камеру ---
+            const constraints = {
                 video: {
                     deviceId: { exact: cam.deviceId },
                     width: { ideal: 1280 },
                     height: { ideal: 720 },
-                    frameRate: { ideal: 30 },
-                    advanced: [{ focusMode: 'continuous' }]
+                    frameRate: { ideal: 30 }
                 }
             };
-            let newStream = await navigator.mediaDevices.getUserMedia(constraints);
-            stream = newStream;
+
+            // ВАЖНО: на части устройств (в основном Chrome/Android WebView, в т.ч. внутри
+            // Telegram) движок continuous-автофокуса не включается от одного applyConstraints
+            // на свежеоткрытом треке — он трогается в работу только при повторной инициализации
+            // потока камеры на уровне драйвера. Поэтому сразу открываем поток второй раз —
+            // это дороже по времени (~короткая пауза), но иначе на таких устройствах картинка
+            // остаётся размытой/на фиксированном фокусе, и Data Matrix просто не читается.
+            let tempStream = await navigator.mediaDevices.getUserMedia(constraints);
+            tempStream.getTracks().forEach(t => t.stop());
+            await new Promise(r => setTimeout(r, 150));
+
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
             videoTrack = stream.getVideoTracks()[0];
             video.srcObject = stream;
             await video.play();
 
-            // Даём 500ms на инициализацию
-            await new Promise(r => setTimeout(r, 500));
+            await applyFocus(videoTrack);
 
-            // Пытаемся применить фокус с перезапуском
-            const focusOk = await applyFocusWithRetry(videoTrack, 2);
-
-            if (focusOk) {
-                setStatus('🔍 Наведите на Data Matrix');
-            } else {
-                // Если фокус не поддерживается, сообщаем пользователю о tap-to-focus
-                setStatus('📌 Нажмите на экран для фокуса');
-            }
-
+            // --- Запускаем сканирование ---
             isScanning = true;
             stopBtn.disabled = false;
             scanFrame.style.display = 'block';
             switchBtn.style.display = cameras.length > 1 ? 'inline-block' : 'none';
+
+            if (focusSupported) {
+                setStatus('🔍 Наведите на Data Matrix');
+            } else {
+                setStatus('📌 Нажмите на экран для фокуса');
+            }
 
             lastDecodeTime = 0;
             decodeLoop();
@@ -291,7 +292,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (scanStatus.textContent !== '✅ Код найден!') setStatus('⏹ Остановлен');
     }
 
-    // --- Переключение камеры ---
+    // --- Переключение камеры (ручное) ---
     async function switchCamera() {
         const wasScanning = isScanning;
         if (wasScanning) stopScanning();
