@@ -1,12 +1,13 @@
 // --- Инициализация Telegram ---
 const tg = window.Telegram?.WebApp;
-if (tg) { tg.ready(); tg.expand(); } 
+if (tg) { tg.ready(); tg.expand(); }
 else console.warn('Telegram Web App SDK не загружен');
 
 document.addEventListener('DOMContentLoaded', function() {
 
     // --- Элементы ---
     const video = document.getElementById('video');
+    const videoContainer = document.getElementById('video-container');
     const canvas = document.getElementById('capture-canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const startBtn = document.getElementById('start-btn');
@@ -20,14 +21,15 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- Состояние ---
     let isScanning = false;
     let stream = null;
+    let videoTrack = null;
     let decodeLoopId = null;
     let lastDecodeTime = 0;
-    const DECODE_INTERVAL = 100; // 10 кадров/сек
-    // Уменьшенная область интереса – только центральные 45% кадра
+    const DECODE_INTERVAL = 100;
     const ROI_RATIO = 0.45;
     let cameras = [];
     let currentCamIdx = -1;
     let readBarcodesFn = null;
+    let focusSupported = false; // флаг поддержки focusMode
 
     // --- UI ---
     function setStatus(text, error = false) {
@@ -83,22 +85,57 @@ document.addEventListener('DOMContentLoaded', function() {
         return cameras.length > 1 ? cameras.length - 1 : 0;
     }
 
-    async function openCamera(index) {
-        const cam = cameras[index];
-        if (!cam) throw new Error('Камера не найдена');
-        const constraints = {
-            video: {
-                deviceId: { exact: cam.deviceId },
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-                // Явно запрашиваем непрерывную фокусировку (если поддерживается)
-                advanced: [{ focusMode: 'continuous' }]
+    // --- Функция для применения фокуса с перезапуском при необходимости ---
+    async function applyFocusWithRetry(track, maxRetries = 2) {
+        if (!track) return false;
+        try {
+            const caps = track.getCapabilities ? track.getCapabilities() : {};
+            if (caps.focusMode && caps.focusMode.includes('continuous')) {
+                await track.applyConstraints({
+                    advanced: [{ focusMode: 'continuous' }]
+                });
+                focusSupported = true;
+                return true;
+            } else {
+                // Если focusMode не поддерживается – пробуем manual (некоторые камеры)
+                if (caps.focusMode && caps.focusMode.includes('manual')) {
+                    await track.applyConstraints({
+                        advanced: [{ focusMode: 'manual', focusDistance: 1.0 }]
+                    });
+                    focusSupported = true;
+                    return true;
+                }
+                focusSupported = false;
+                return false;
             }
-        };
-        return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (e) {
+            console.warn('Ошибка применения фокуса:', e);
+            if (maxRetries > 0) {
+                // Пробуем перезапустить трек
+                const newStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        deviceId: { exact: track.getSettings().deviceId },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        frameRate: { ideal: 30 }
+                    }
+                });
+                const newTrack = newStream.getVideoTracks()[0];
+                // Заменяем поток
+                const oldStream = stream;
+                stream = newStream;
+                videoTrack = newTrack;
+                video.srcObject = newStream;
+                await video.play();
+                oldStream.getTracks().forEach(t => t.stop());
+                // Повторяем попытку
+                return await applyFocusWithRetry(newTrack, maxRetries - 1);
+            }
+            return false;
+        }
     }
 
-    // --- Декодирование с улучшенной предобработкой и новыми параметрами ---
+    // --- Декодирование ---
     function decodeLoop() {
         if (!isScanning) return;
         decodeLoopId = requestAnimationFrame(decodeLoop);
@@ -111,7 +148,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const vw = video.videoWidth, vh = video.videoHeight;
         if (!vw || !vh) return;
 
-        // Вырезаем центральную область ROI_RATIO
         const cropW = vw * ROI_RATIO, cropH = vh * ROI_RATIO;
         const sx = (vw - cropW) / 2, sy = (vh - cropH) / 2;
 
@@ -119,7 +155,6 @@ document.addEventListener('DOMContentLoaded', function() {
         canvas.height = cropH;
         ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
 
-        // Повышаем контраст и бинаризация (чёрно-белое)
         const imageData = ctx.getImageData(0, 0, cropW, cropH);
         const data = imageData.data;
         for (let i = 0; i < data.length; i += 4) {
@@ -132,12 +167,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const processedImageData = ctx.getImageData(0, 0, cropW, cropH);
         if (!readBarcodesFn) return;
 
-        // Запускаем декодирование с расширенными параметрами
         readBarcodesFn(processedImageData, {
             formats: ['DataMatrix'],
-            tryHarder: true,      // усиленный поиск
-            tryRotate: true,      // попытка декодирования при повороте
-            tryDenoise: true,     // попытка подавления шума
+            tryHarder: true,
+            tryRotate: true,
+            tryDenoise: true,
             maxSymbols: 1,
         }).then(results => {
             if (!isScanning) return;
@@ -145,18 +179,43 @@ document.addEventListener('DOMContentLoaded', function() {
                 const text = results[0].text;
                 setResult(text);
                 setStatus('✅ Код найден!');
-                // Останавливаем сканирование после успеха, чтобы не тратить ресурсы
                 stopScanning();
-                // Но оставляем кнопку "Запустить" активной для повторного сканирования
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
             }
-        }).catch(err => {
-            // Ошибки игнорируем (обычно это "не найден код")
-        });
+        }).catch(err => {});
     }
 
-    // --- Запуск ---
+    // --- Tap-to-focus ---
+    videoContainer.addEventListener('click', async (e) => {
+        if (!isScanning || !videoTrack) return;
+        if (!focusSupported) {
+            setStatus('❌ Фокус не поддерживается', true);
+            return;
+        }
+        const rect = video.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width;
+        const y = (e.clientY - rect.top) / rect.height;
+        try {
+            await videoTrack.applyConstraints({
+                advanced: [{ focusMode: 'manual', pointsOfInterest: [{ x, y }] }]
+            });
+            setStatus('🔍 Фокус установлен');
+            setTimeout(async () => {
+                try {
+                    await videoTrack.applyConstraints({
+                        advanced: [{ focusMode: 'continuous' }]
+                    });
+                    setStatus('🔍 Наведите на Data Matrix');
+                } catch {}
+            }, 1500);
+        } catch (e) {
+            console.warn('Tap-to-focus не поддерживается:', e);
+            setStatus('❌ Tap-focus недоступен', true);
+        }
+    });
+
+    // --- Запуск (с принудительным перезапуском) ---
     async function startScanning() {
         if (isScanning) return;
         try {
@@ -172,28 +231,41 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!cameras.length) throw new Error('Камер не найдено');
 
             if (currentCamIdx === -1) currentCamIdx = pickBackIndex();
-            const newStream = await openCamera(currentCamIdx);
+            const cam = cameras[currentCamIdx];
+
+            // Первый запуск
+            let constraints = {
+                video: {
+                    deviceId: { exact: cam.deviceId },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    frameRate: { ideal: 30 },
+                    advanced: [{ focusMode: 'continuous' }]
+                }
+            };
+            let newStream = await navigator.mediaDevices.getUserMedia(constraints);
             stream = newStream;
+            videoTrack = stream.getVideoTracks()[0];
             video.srcObject = stream;
             await video.play();
 
-            // Попытка принудительно установить фокус (если трек поддерживает)
-            try {
-                const track = stream.getVideoTracks()[0];
-                if (track && track.applyConstraints) {
-                    await track.applyConstraints({
-                        advanced: [{ focusMode: 'continuous' }]
-                    });
-                }
-            } catch (e) {
-                console.warn('Не удалось применить focusMode:', e);
+            // Даём 500ms на инициализацию
+            await new Promise(r => setTimeout(r, 500));
+
+            // Пытаемся применить фокус с перезапуском
+            const focusOk = await applyFocusWithRetry(videoTrack, 2);
+
+            if (focusOk) {
+                setStatus('🔍 Наведите на Data Matrix');
+            } else {
+                // Если фокус не поддерживается, сообщаем пользователю о tap-to-focus
+                setStatus('📌 Нажмите на экран для фокуса');
             }
 
             isScanning = true;
             stopBtn.disabled = false;
             scanFrame.style.display = 'block';
             switchBtn.style.display = cameras.length > 1 ? 'inline-block' : 'none';
-            setStatus('🔍 Наведите на Data Matrix');
 
             lastDecodeTime = 0;
             decodeLoop();
@@ -211,7 +283,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function stopScanning() {
         isScanning = false;
         if (decodeLoopId) { cancelAnimationFrame(decodeLoopId); decodeLoopId = null; }
-        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; videoTrack = null; }
         video.srcObject = null;
         scanFrame.style.display = 'none';
         startBtn.disabled = false;
