@@ -244,25 +244,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             };
 
-            // ВАЖНО (подтверждено вручную): на части устройств (Chrome/Android WebView,
-            // в т.ч. внутри Telegram) движок continuous-автофокуса просыпается только при
-            // переключении на ДРУГУЮ физическую камеру и обратно — просто закрыть и заново
-            // открыть тот же deviceId недостаточно, автофокус всё равно остаётся "залипшим".
-            // Поэтому перед основной камерой на мгновение открываем любую другую доступную
-            // камеру (обычно фронтальную) и сразу её закрываем — это тот же самый переход,
-            // который вручную делает кнопка «Камера», нажатая дважды.
-            const bounceCam = cameras.find(c => c.deviceId !== cam.deviceId);
-            if (bounceCam) {
-                try {
-                    const bounceStream = await navigator.mediaDevices.getUserMedia({
-                        video: { deviceId: { exact: bounceCam.deviceId } }
-                    });
-                    bounceStream.getTracks().forEach(t => t.stop());
-                    await new Promise(r => setTimeout(r, 200));
-                } catch (e) {
-                    console.warn('Не удалось выполнить bounce-переключение камеры:', e);
-                }
-            }
+            // ВАЖНО: на части устройств (в основном Chrome/Android WebView, в т.ч. внутри
+            // Telegram) движок continuous-автофокуса не включается от одного applyConstraints
+            // на свежеоткрытом треке — он трогается в работу только при повторной инициализации
+            // потока камеры на уровне драйвера. Поэтому сразу открываем поток второй раз —
+            // это дороже по времени (~короткая пауза), но иначе на таких устройствах картинка
+            // остаётся размытой/на фиксированном фокусе, и Data Matrix просто не читается.
+            let tempStream = await navigator.mediaDevices.getUserMedia(constraints);
+            tempStream.getTracks().forEach(t => t.stop());
+            await new Promise(r => setTimeout(r, 150));
 
             stream = await navigator.mediaDevices.getUserMedia(constraints);
             videoTrack = stream.getVideoTracks()[0];
