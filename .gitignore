@@ -7,6 +7,8 @@ __pycache__/
 *.pyc
 .env
 venv/
+scanner_data.db
+*.db
 
 # OS
 .DS_Store
