@@ -3,9 +3,10 @@ import logging
 import random
 import aiosqlite
 from dotenv import load_dotenv
+import os
 
-
-DB_PATH = load_dotenv("DB_PATH")
+load_dotenv()  # загружаем все переменные из .env
+DB_PATH = os.getenv("DB_PATH")
 
 # --- Синхронные функции для заполнения справочников (можно использовать отдельно) ---
 
