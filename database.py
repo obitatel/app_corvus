@@ -3,8 +3,11 @@ import uuid
 import json
 from typing import List, Dict, Any, Optional
 import aiosqlite
+from dotenv import load_dotenv
+import os
 
-DB_PATH = "scanner_data.db"
+load_dotenv()
+DB_PATH = os.getenv("DB_PATH")
 
 
 async def init_db():
