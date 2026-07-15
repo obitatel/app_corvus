@@ -7,6 +7,12 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
 
+# Импортируем функции из database.py
+from database import (
+    qr_exists, dm_exists, is_qr_used, is_dm_used,
+    generate_unique_ticket_id, insert_ticket
+)
+
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEB_APP_URL = os.getenv("WEB_APP_URL")
@@ -33,23 +39,66 @@ async def cmd_start(message: types.Message):
     )
     await message.answer("Нажмите кнопку, чтобы открыть сканер.", reply_markup=keyboard)
 
-# Обработчик для web_app_data
 @dp.message(lambda message: message.web_app_data is not None)
 async def handle_web_app_data(message: types.Message):
     logging.info(f"Получены данные: {message.web_app_data.data}")
     try:
-        data = json.loads(message.web_app_data.data)
-        codes = data.get('codes', [])
+        payload = json.loads(message.web_app_data.data)
+        codes = payload.get('codes', [])
         if not codes:
             await message.answer("❌ Нет кодов.")
             return
-        reply = "✅ Получены коды:\n" + "\n".join([f"- {c['format']}: {c['text']}" for c in codes])
-        await message.answer(reply)
+
+        # Извлекаем QR и DM
+        qr = None
+        dm = None
+        for code in codes:
+            fmt = code.get('format')
+            txt = code.get('text')
+            if fmt == 'QRCode':
+                qr = txt
+            elif fmt == 'DataMatrix':
+                dm = txt
+
+        if not qr or not dm:
+            await message.answer("❌ Не найдены оба кода (QR и DataMatrix).")
+            return
+
+        # Проверка QR в справочнике
+        if not await qr_exists(qr):
+            await message.answer("❌ Невалидный QR-код.")
+            return
+
+        # Проверка DM в справочнике
+        if not await dm_exists(dm):
+            await message.answer("❌ Невалидный DataMatrix код.")
+            return
+
+        # Проверка, не использован ли QR
+        if await is_qr_used(qr):
+            await message.answer("❌ QR-код уже был использован.")
+            return
+
+        # Проверка, не использован ли DM
+        if await is_dm_used(dm):
+            await message.answer("❌ DataMatrix код уже был использован.")
+            return
+
+        # Генерация уникального ticket_id
+        ticket_id = await generate_unique_ticket_id()
+
+        # Вставка в tickets
+        user_id = message.from_user.id
+        record_id = await insert_ticket(user_id, qr, dm, ticket_id)
+
+        # Успешный ответ
+        await message.answer(f"✅ Заявка успешно создана!\nНомер билета: {ticket_id}")
+
     except Exception as e:
         logging.exception("Ошибка обработки")
-        await message.answer(f"❌ Ошибка: {e}")
+        await message.answer("❌ Внутренняя ошибка. Попробуйте позже.")
 
-# Универсальный обработчик (для отладки)
+# Универсальный обработчик для отладки
 @dp.message()
 async def catch_all(message: types.Message):
     logging.info(f"Получено сообщение от {message.from_user.id}: {message.text}")
