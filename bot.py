@@ -10,7 +10,8 @@ from aiogram.types import WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
 
 from database import (
     qr_exists, dm_exists, is_qr_used, is_dm_used,
-    generate_unique_ticket_id, insert_ticket
+    generate_unique_ticket_id, insert_ticket,
+    get_tickets_by_user  # новая функция
 )
 
 load_dotenv()
@@ -26,43 +27,70 @@ if not WEB_APP_URL:
 LOG_FILE = "bot.log"
 logger = logging.getLogger("scanner_bot")
 logger.setLevel(logging.INFO)
-
-# Формат логов
-formatter = logging.Formatter(
-    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-# Обработчик для файла с ротацией
-file_handler = RotatingFileHandler(
-    LOG_FILE, maxBytes=5*1024*1024, backupCount=5, encoding='utf-8'
-)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler = RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding='utf-8')
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
-
-# Также выводим в консоль (для отладки)
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
-# Корневой логгер aiogram тоже можно настроить, но не обязательно
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    web_app_button = KeyboardButton(
+
+# --- Клавиатура с двумя кнопками ---
+def get_main_keyboard():
+    scanner_btn = KeyboardButton(
         text="📷 Открыть сканер",
         web_app=WebAppInfo(url=WEB_APP_URL)
     )
+    lottery_btn = KeyboardButton(
+        text="🎰 Лотерея Doyousam"
+    )
     keyboard = ReplyKeyboardMarkup(
-        keyboard=[[web_app_button]],
+        keyboard=[[scanner_btn, lottery_btn]],
         resize_keyboard=True
     )
-    await message.answer("Нажмите кнопку, чтобы открыть сканер.", reply_markup=keyboard)
+    return keyboard
+
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    await message.answer(
+        "Добро пожаловать! Выберите действие:",
+        reply_markup=get_main_keyboard()
+    )
     logger.info(f"Пользователь {message.from_user.id} запустил /start")
 
+
+# --- Обработчик кнопки "Лотерея Doyousam" ---
+@dp.message(lambda message: message.text == "🎰 Лотерея Doyousam")
+async def show_my_tickets(message: types.Message):
+    user_id = message.from_user.id
+    tickets = await get_tickets_by_user(user_id)
+    if not tickets:
+        await message.answer(
+            "У вас пока нет билетов. Отсканируйте QR и DataMatrix, чтобы получить билет.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    # Формируем список с порядковыми номерами
+    lines = []
+    for idx, ticket in enumerate(tickets, start=1):
+        ticket_id = ticket['ticket_id']
+        created = ticket['created_at']
+        lines.append(f"{idx}. {ticket_id} (от {created})")
+
+    text = "🎫 Ваши билеты:\n" + "\n".join(lines)
+    await message.answer(text, reply_markup=get_main_keyboard())
+    logger.info(f"Пользователь {user_id} запросил список билетов, найдено {len(tickets)}")
+
+
+# --- Обработчик данных из веб-приложения (без изменений) ---
 @dp.message(lambda message: message.web_app_data is not None)
 async def handle_web_app_data(message: types.Message):
     user = message.from_user
@@ -74,10 +102,9 @@ async def handle_web_app_data(message: types.Message):
         codes = payload.get('codes', [])
         if not codes:
             logger.warning(f"Нет кодов в данных от {user.id}")
-            await message.answer("❌ Нет кодов.")
+            await message.answer("❌ Нет кодов.", reply_markup=get_main_keyboard())
             return
 
-        # Извлекаем QR и DM
         qr = None
         dm = None
         for code in codes:
@@ -92,31 +119,31 @@ async def handle_web_app_data(message: types.Message):
 
         if not qr or not dm:
             logger.warning(f"Не найдены оба кода от {user.id}: QR={qr}, DM={dm}")
-            await message.answer("❌ Не найдены оба кода (QR и DataMatrix).")
+            await message.answer("❌ Не найдены оба кода (QR и DataMatrix).", reply_markup=get_main_keyboard())
             return
 
         # Проверка QR
         if not await qr_exists(qr):
             logger.warning(f"QR={qr} не найден в справочнике, пользователь {user.id}")
-            await message.answer("❌ Невалидный QR-код.")
+            await message.answer("❌ Невалидный QR-код.", reply_markup=get_main_keyboard())
             return
 
         # Проверка DM
         if not await dm_exists(dm):
             logger.warning(f"DM={dm} не найден в справочнике, пользователь {user.id}")
-            await message.answer("❌ Невалидный DataMatrix код.")
+            await message.answer("❌ Невалидный DataMatrix код.", reply_markup=get_main_keyboard())
             return
 
         # Проверка, не использован ли QR
         if await is_qr_used(qr):
             logger.warning(f"QR={qr} уже использован, пользователь {user.id}")
-            await message.answer("❌ QR-код уже был использован.")
+            await message.answer("❌ QR-код уже был использован.", reply_markup=get_main_keyboard())
             return
 
         # Проверка, не использован ли DM
         if await is_dm_used(dm):
             logger.warning(f"DM={dm} уже использован, пользователь {user.id}")
-            await message.answer("❌ DataMatrix код уже был использован.")
+            await message.answer("❌ DataMatrix код уже был использован.", reply_markup=get_main_keyboard())
             return
 
         # Генерация ticket_id
@@ -127,20 +154,26 @@ async def handle_web_app_data(message: types.Message):
         record_id = await insert_ticket(user.id, qr, dm, ticket_id)
         logger.info(f"Запись создана с id={record_id}, ticket_id={ticket_id}, пользователь {user.id}")
 
-        await message.answer(f"✅ Заявка успешно создана!\nНомер билета: {ticket_id}")
+        await message.answer(
+            f"✅ Заявка успешно создана!\nНомер билета: {ticket_id}",
+            reply_markup=get_main_keyboard()
+        )
 
     except Exception as e:
         logger.exception(f"Ошибка обработки данных от {user.id}: {e}")
-        await message.answer("❌ Внутренняя ошибка. Попробуйте позже.")
+        await message.answer("❌ Внутренняя ошибка. Попробуйте позже.", reply_markup=get_main_keyboard())
+
 
 # Универсальный обработчик для отладки
 @dp.message()
 async def catch_all(message: types.Message):
     logger.info(f"Получено сообщение от {message.from_user.id}: {message.text}")
 
+
 async def main():
     logger.info("Бот запущен")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

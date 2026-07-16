@@ -4,6 +4,8 @@ import random
 import aiosqlite
 from dotenv import load_dotenv
 import os
+from typing import List, Dict, Any
+
 
 load_dotenv()  # загружаем все переменные из .env
 DB_PATH = os.getenv("DB_PATH")
@@ -78,3 +80,16 @@ async def insert_ticket(user_id: int, qr: str, dm: str, ticket_id: str) -> int:
         )
         await db.commit()
         return cursor.lastrowid
+
+async def get_tickets_by_user(user_id: int) -> List[Dict[str, Any]]:
+    """
+    Возвращает список билетов пользователя, отсортированных по дате создания (сначала новые).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            'SELECT ticket_id, created_at FROM tickets WHERE user_id = ? ORDER BY created_at DESC',
+            (user_id,)
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
