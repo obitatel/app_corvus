@@ -48,7 +48,7 @@ def get_main_keyboard():
         web_app=WebAppInfo(url=WEB_APP_URL)
     )
     lottery_btn = KeyboardButton(
-        text="🎰 Лотерея Doyousam"
+        text="Лотерея Doyousam"
     )
     keyboard = ReplyKeyboardMarkup(
         keyboard=[[scanner_btn, lottery_btn]],
@@ -67,7 +67,7 @@ async def cmd_start(message: types.Message):
 
 
 # --- Обработчик кнопки "Лотерея Doyousam" ---
-@dp.message(lambda message: message.text == "🎰 Лотерея Doyousam")
+@dp.message(lambda message: message.text == "Лотерея Doyousam")
 async def show_my_tickets(message: types.Message):
     user_id = message.from_user.id
     tickets = await get_tickets_by_user(user_id)
@@ -85,7 +85,7 @@ async def show_my_tickets(message: types.Message):
         created = ticket['created_at']
         lines.append(f"{idx}. {ticket_id} (от {created})")
 
-    text = "🎫 Ваши билеты:\n" + "\n".join(lines)
+    text = "Ваши билеты:\n" + "\n".join(lines)
     await message.answer(text, reply_markup=get_main_keyboard())
     logger.info(f"Пользователь {user_id} запросил список билетов, найдено {len(tickets)}")
 
